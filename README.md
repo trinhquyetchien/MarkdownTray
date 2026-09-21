@@ -1,0 +1,41 @@
+# Markdown Tray App
+
+A lightweight system tray application for Ubuntu/Linux that provides quick access to your daily Markdown notes and project notes. It renders Markdown perfectly and allows you to interactively check off task lists right from the preview window!
+
+## Features
+- **Daily Notes:** Automatically creates and opens `YYYY-MM-DD.md` files so you can quickly log daily tasks.
+- **Custom Menus:** Add custom folders to the menu to quickly access notes for different projects.
+- **Interactive Checkboxes:** Tick off tasks directly in the preview window; it automatically updates the underlying `.md` file!
+- **Native Look:** Uses WebKit2 for beautiful Markdown rendering and AyatanaAppIndicator for seamless GNOME integration.
+
+## Dependencies
+
+- Python 3
+- GTK 3 & WebKit2 for Python (`python3-gi`, `gir1.2-webkit2-4.1`)
+- Ayatana AppIndicator (`gir1.2-ayatanaappindicator3-0.1`)
+- `markdown-it-py`
+
+### System Packages (Ubuntu/Debian)
+```bash
+sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1 gir1.2-ayatanaappindicator3-0.1
+```
+
+### Python Packages
+```bash
+pip install -r requirements.txt
+```
+
+## Running the App
+
+Run the script directly from the terminal:
+```bash
+python3 md_tray_app.py
+```
+
+## Adding to Autostart
+
+If you want the app to start automatically when you log in, you can create a `.desktop` file in `~/.config/autostart/`.
+Alternatively, you can manage it using [GNU Stow](https://www.gnu.org/software/stow/) as part of your dotfiles setup!
+
+## License
+MIT License

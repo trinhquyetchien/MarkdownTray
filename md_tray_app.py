@@ -65,11 +65,53 @@ HTML_TEMPLATE = """
 </html>
 """
 
+class AddMenuDialog(Gtk.Dialog):
+    def __init__(self, parent=None):
+        super().__init__(title="Add Menu", transient_for=parent, flags=0)
+        self.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_ADD, Gtk.ResponseType.OK
+        )
+        self.set_default_size(300, 150)
+        
+        box = self.get_content_area()
+        
+        # Name Entry
+        hbox1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        hbox1.set_margin_top(10)
+        hbox1.set_margin_bottom(10)
+        hbox1.set_margin_start(10)
+        hbox1.set_margin_end(10)
+        
+        label_name = Gtk.Label(label="Menu Name:")
+        self.entry_name = Gtk.Entry()
+        hbox1.pack_start(label_name, False, False, 0)
+        hbox1.pack_start(self.entry_name, True, True, 0)
+        box.pack_start(hbox1, False, False, 0)
+        
+        # Folder Picker
+        hbox2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        hbox2.set_margin_bottom(10)
+        hbox2.set_margin_start(10)
+        hbox2.set_margin_end(10)
+        
+        label_folder = Gtk.Label(label="Folder:")
+        self.btn_folder = Gtk.FileChooserButton(title="Select a Folder", action=Gtk.FileChooserAction.SELECT_FOLDER)
+        hbox2.pack_start(label_folder, False, False, 0)
+        hbox2.pack_start(self.btn_folder, True, True, 0)
+        box.pack_start(hbox2, False, False, 0)
+        
+        self.show_all()
+
+
 class MarkdownTrayApp:
-    def __init__(self, note_dir):
-        self.note_dir = note_dir
-        if not os.path.exists(self.note_dir):
-            os.makedirs(self.note_dir)
+    def __init__(self):
+        self.config_dir = os.path.expanduser("~/.config/md-tray-app")
+        self.config_file = os.path.join(self.config_dir, "config.json")
+        self.load_config()
+        
+        if not os.path.exists(self.daily_dir):
+            os.makedirs(self.daily_dir, exist_ok=True)
             
         self.window = None
         self.md_parser = MarkdownIt("commonmark", {"html": True})
@@ -77,9 +119,36 @@ class MarkdownTrayApp:
         
         self.setup_indicator()
 
+    def load_config(self):
+        default_dir = os.path.expanduser("~/Note/Daily")
+        self.daily_dir = default_dir
+        self.custom_menus = []
+        
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, "r") as f:
+                    config = json.load(f)
+                    # Support old config format transparently
+                    if "note_dir" in config:
+                        self.daily_dir = config["note_dir"]
+                    else:
+                        self.daily_dir = config.get("daily_dir", default_dir)
+                    self.custom_menus = config.get("custom_menus", [])
+            except Exception as e:
+                print("Error loading config:", e)
+
+    def save_config(self):
+        if not os.path.exists(self.config_dir):
+            os.makedirs(self.config_dir, exist_ok=True)
+        with open(self.config_file, "w") as f:
+            json.dump({
+                "daily_dir": self.daily_dir,
+                "custom_menus": self.custom_menus
+            }, f)
+
     def get_today_filepath(self):
         today_str = datetime.date.today().strftime("%Y-%m-%d.md")
-        return os.path.join(self.note_dir, today_str)
+        return os.path.join(self.daily_dir, today_str)
 
     def setup_indicator(self):
         self.indicator = AyatanaAppIndicator3.Indicator.new(
@@ -89,61 +158,122 @@ class MarkdownTrayApp:
         self.indicator.set_status(AyatanaAppIndicator3.IndicatorStatus.ACTIVE)
         self.indicator.set_menu(self.build_menu())
 
+    def create_folder_submenu(self, folder_path):
+        submenu = Gtk.Menu()
+        if not os.path.exists(folder_path):
+            empty_item = Gtk.MenuItem(label="Folder not found")
+            empty_item.set_sensitive(False)
+            submenu.append(empty_item)
+            return submenu
+            
+        files = glob.glob(os.path.join(folder_path, "*.md"))
+        files.sort(reverse=True)
+        
+        if not files:
+            empty_item = Gtk.MenuItem(label="No notes found")
+            empty_item.set_sensitive(False)
+            submenu.append(empty_item)
+        else:
+            for fpath in files[:15]:
+                fname = os.path.basename(fpath)
+                item_file = Gtk.MenuItem(label=fname)
+                item_file.connect('activate', lambda w, p=fpath: self.switch_file(p))
+                submenu.append(item_file)
+        return submenu
+
     def build_menu(self):
         menu = Gtk.Menu()
-        
-        # Toggle Preview
-        item_toggle = Gtk.MenuItem(label='Toggle Preview')
-        item_toggle.connect('activate', self.on_toggle_preview)
-        menu.append(item_toggle)
         
         # Today's Note
         item_today = Gtk.MenuItem(label="Today's Note")
         item_today.connect('activate', lambda w: self.switch_file(self.get_today_filepath()))
         menu.append(item_today)
         
-        # Recent Notes Submenu
-        recent_menu = Gtk.Menu()
-        files = glob.glob(os.path.join(self.note_dir, "*.md"))
-        files.sort(reverse=True) # Sort descending by name (date)
+        # Daily Notes Submenu
+        daily_menu = self.create_folder_submenu(self.daily_dir)
+        item_daily = Gtk.MenuItem(label="Daily Notes")
+        item_daily.set_submenu(daily_menu)
+        menu.append(item_daily)
         
-        if not files:
-            empty_item = Gtk.MenuItem(label="No previous notes")
-            empty_item.set_sensitive(False)
-            recent_menu.append(empty_item)
-        else:
-            for fpath in files[:15]: # Show up to 15 recent files
-                fname = os.path.basename(fpath)
-                item_file = Gtk.MenuItem(label=fname)
-                item_file.connect('activate', lambda w, p=fpath: self.switch_file(p))
-                recent_menu.append(item_file)
-                
-        item_recent = Gtk.MenuItem(label="Recent Notes")
-        item_recent.set_submenu(recent_menu)
-        menu.append(item_recent)
+        # Edit Daily Path
+        item_edit_daily = Gtk.MenuItem(label="Edit Daily Path...")
+        item_edit_daily.connect('activate', self.on_change_daily_directory)
+        menu.append(item_edit_daily)
         
-        # Separator
         menu.append(Gtk.SeparatorMenuItem())
         
-        # Quit
-        item_quit = Gtk.MenuItem(label='Quit')
-        item_quit.connect('activate', self.on_quit)
-        menu.append(item_quit)
+        # Custom Menus
+        for cmenu in self.custom_menus:
+            submenu = self.create_folder_submenu(cmenu["path"])
+            item = Gtk.MenuItem(label=cmenu["name"])
+            item.set_submenu(submenu)
+            menu.append(item)
+            
+        if self.custom_menus:
+            menu.append(Gtk.SeparatorMenuItem())
+            
+        # Add Menu
+        item_add_menu = Gtk.MenuItem(label="Add Menu...")
+        item_add_menu.connect('activate', self.on_add_menu)
+        menu.append(item_add_menu)
         
         menu.show_all()
         return menu
 
+    def on_change_daily_directory(self, item):
+        dialog = Gtk.FileChooserDialog(
+            title="Choose folder for Daily Notes",
+            parent=None,
+            action=Gtk.FileChooserAction.SELECT_FOLDER
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OPEN, Gtk.ResponseType.OK
+        )
+        dialog.set_current_folder(self.daily_dir)
+        dialog.set_keep_above(True)
+        
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            new_dir = dialog.get_filename()
+            self.daily_dir = new_dir
+            self.save_config()
+            self.current_filepath = self.get_today_filepath()
+            self.indicator.set_menu(self.build_menu())
+            if self.window and self.window.get_visible():
+                self.window.set_title(f"Notes - {os.path.basename(self.current_filepath)}")
+                self.update_webview()
+                
+        dialog.destroy()
+
+    def on_add_menu(self, item):
+        dialog = AddMenuDialog()
+        dialog.set_keep_above(True)
+        response = dialog.run()
+        
+        if response == Gtk.ResponseType.OK:
+            name = dialog.entry_name.get_text().strip()
+            folder = dialog.btn_folder.get_filename()
+            
+            if name and folder:
+                self.custom_menus.append({
+                    "name": name,
+                    "path": folder
+                })
+                self.save_config()
+                self.indicator.set_menu(self.build_menu())
+                
+        dialog.destroy()
+
     def switch_file(self, filepath):
+        if self.window and self.window.get_visible() and self.current_filepath == filepath:
+            self.window.hide()
+            return
+            
         self.current_filepath = filepath
         if self.window:
             self.window.set_title(f"Notes - {os.path.basename(self.current_filepath)}")
         self.show_preview()
-
-    def on_toggle_preview(self, item):
-        if self.window and self.window.get_visible():
-            self.window.hide()
-        else:
-            self.show_preview()
 
     def show_preview(self):
         if not self.window:
@@ -169,7 +299,6 @@ class MarkdownTrayApp:
 
     def update_webview(self):
         if not os.path.exists(self.current_filepath):
-            # File does not exist yet
             date_str = os.path.basename(self.current_filepath).replace(".md", "")
             text = f"# {date_str}\n\n<span class='empty-state'>Chưa có ghi chú nào. Hãy tạo file này để bắt đầu.</span>"
             html_content = self.md_parser.render(text)
@@ -188,7 +317,6 @@ class MarkdownTrayApp:
         full_html = HTML_TEMPLATE.format(css=CSS, content=html_content)
         self.webview.load_html(full_html, "file:///")
         
-        # Update the menu to refresh the Recent Notes list if a new file was created outside
         self.indicator.set_menu(self.build_menu())
 
     def on_task_toggled(self, manager, message):
@@ -223,11 +351,7 @@ class MarkdownTrayApp:
         except Exception as e:
             print("Error updating file:", e)
 
-    def on_quit(self, item):
-        Gtk.main_quit()
-
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal.SIG_DFL)
-    NOTE_DIR = "/home/trinhquyetchien/Note/Daily"
-    app = MarkdownTrayApp(NOTE_DIR)
+    app = MarkdownTrayApp()
     Gtk.main()
