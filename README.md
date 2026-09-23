@@ -4,6 +4,7 @@ A lightweight system tray application for Ubuntu/Linux that provides quick acces
 
 ## Features
 - **Daily Notes:** Automatically creates and opens `YYYY-MM-DD.md` files so you can quickly log daily tasks.
+- **Weekly Calendar:** A built-in drag-and-drop weekly calendar that runs on modern HTML/JS to easily schedule your tasks with colors and time-tracking.
 - **Custom Menus:** Add custom folders to the menu to quickly access notes for different projects.
 - **Interactive Checkboxes:** Tick off tasks directly in the preview window; it automatically updates the underlying `.md` file!
 - **Native Look:** Uses WebKit2 for beautiful Markdown rendering and AyatanaAppIndicator for seamless GNOME integration.
@@ -26,7 +27,6 @@ pip install -r requirements.txt
 ```
 
 ## Running the App
-
 Run the script directly from the terminal:
 ```bash
 python3 md_tray_app.py

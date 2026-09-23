@@ -108,12 +108,16 @@ class MarkdownTrayApp:
     def __init__(self):
         self.config_dir = os.path.expanduser("~/.config/md-tray-app")
         self.config_file = os.path.join(self.config_dir, "config.json")
+        self.calendar_file = os.path.join(self.config_dir, "calendar.json")
+        self.calendar_events = []
         self.load_config()
+        self.load_calendar()
         
         if not os.path.exists(self.daily_dir):
             os.makedirs(self.daily_dir, exist_ok=True)
             
         self.window = None
+        self.calendar_window = None
         self.md_parser = MarkdownIt("commonmark", {"html": True})
         self.current_filepath = self.get_today_filepath()
         
@@ -145,6 +149,23 @@ class MarkdownTrayApp:
                 "daily_dir": self.daily_dir,
                 "custom_menus": self.custom_menus
             }, f)
+
+    def load_calendar(self):
+        if os.path.exists(self.calendar_file):
+            try:
+                with open(self.calendar_file, "r") as f:
+                    self.calendar_events = json.load(f)
+            except Exception as e:
+                print("Error loading calendar:", e)
+
+    def save_calendar(self):
+        if not os.path.exists(self.config_dir):
+            os.makedirs(self.config_dir, exist_ok=True)
+        try:
+            with open(self.calendar_file, "w") as f:
+                json.dump(self.calendar_events, f)
+        except Exception as e:
+            print("Error saving calendar:", e)
 
     def get_today_filepath(self):
         today_str = datetime.date.today().strftime("%Y-%m-%d.md")
@@ -188,6 +209,11 @@ class MarkdownTrayApp:
         item_today = Gtk.MenuItem(label="Today's Note")
         item_today.connect('activate', lambda w: self.switch_file(self.get_today_filepath()))
         menu.append(item_today)
+        
+        # Weekly Calendar
+        item_calendar = Gtk.MenuItem(label="Weekly Calendar")
+        item_calendar.connect('activate', self.on_show_calendar)
+        menu.append(item_calendar)
         
         # Daily Notes Submenu
         daily_menu = self.create_folder_submenu(self.daily_dir)
@@ -350,6 +376,57 @@ class MarkdownTrayApp:
                 
         except Exception as e:
             print("Error updating file:", e)
+
+    def on_show_calendar(self, item):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        cal_html_path = os.path.join(script_dir, "calendar.html")
+
+        if not self.calendar_window:
+            self.calendar_window = Gtk.Window()
+            self.calendar_window.set_title("Weekly Calendar")
+            self.calendar_window.set_default_size(900, 700)
+            self.calendar_window.connect("delete-event", self.on_calendar_window_delete)
+            
+            manager = WebKit2.UserContentManager()
+            manager.register_script_message_handler("calendar_action")
+            manager.connect("script-message-received::calendar_action", self.on_calendar_action)
+            
+            self.cal_webview = WebKit2.WebView.new_with_user_content_manager(manager)
+            self.cal_webview.connect("load-changed", self.on_cal_load_changed)
+            self.calendar_window.add(self.cal_webview)
+            
+        if os.path.exists(cal_html_path):
+            self.cal_webview.load_uri("file://" + cal_html_path)
+        else:
+            print("calendar.html not found at:", cal_html_path)
+            
+        self.calendar_window.show_all()
+        self.calendar_window.present()
+
+    def on_cal_load_changed(self, webview, load_event):
+        if load_event == WebKit2.LoadEvent.FINISHED:
+            # Inject data
+            events_json = json.dumps(self.calendar_events)
+            js_safe_json = json.dumps(events_json)
+            script = f"loadData({js_safe_json});"
+            webview.run_javascript(script, None, None, None)
+
+    def on_calendar_window_delete(self, window, event):
+        window.hide()
+        return True
+
+    def on_calendar_action(self, manager, message):
+        try:
+            msg_str = message.get_js_value().to_string()
+            msg = json.loads(msg_str)
+            action = msg.get("action")
+            data = msg.get("data")
+            
+            if action == "save_events":
+                self.calendar_events = data
+                self.save_calendar()
+        except Exception as e:
+            print("Error parsing calendar message:", e)
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal.SIG_DFL)
