@@ -227,6 +227,35 @@
         background: rgba(255, 255, 255, 0.3);
       }
 
+      .repeat-days {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+      }
+      .repeat-days label {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        background: var(--bg-input);
+        border: 1px solid var(--border-color);
+        padding: 6px 10px;
+        border-radius: var(--radius);
+        cursor: pointer;
+        margin-bottom: 0;
+        font-weight: 500;
+        font-size: 12px;
+        color: var(--text-main);
+      }
+      .repeat-days label:has(input:checked) {
+        border-color: var(--btn-primary);
+        background: rgba(10, 132, 255, 0.1);
+      }
+      .repeat-days input {
+        margin: 0;
+        cursor: pointer;
+      }
+
       #current-time-line {
         position: absolute;
         left: 0;
@@ -454,6 +483,17 @@
             <label>End Time</label>
             <input type="time" id="ev-end" />
           </div>
+        </div>
+
+        <label>Repeat Weekly</label>
+        <div class="repeat-days" id="ev-repeat">
+           <label><input type="checkbox" value="1"> Mon</label>
+           <label><input type="checkbox" value="2"> Tue</label>
+           <label><input type="checkbox" value="3"> Wed</label>
+           <label><input type="checkbox" value="4"> Thu</label>
+           <label><input type="checkbox" value="5"> Fri</label>
+           <label><input type="checkbox" value="6"> Sat</label>
+           <label><input type="checkbox" value="0"> Sun</label>
         </div>
 
         <label>Event Color</label>
@@ -833,9 +873,47 @@
         }
 
         const dateToEvents = {};
+        
+        const weekEvents = [];
+        const startOfWeekTime = startOfWeek.getTime();
+        
         events.forEach((ev) => {
-          const startDate = new Date(ev.start);
-          const endDate = new Date(ev.end);
+           if (ev.repeatDays && ev.repeatDays.length > 0) {
+              const anchorDate = new Date(ev.start);
+              anchorDate.setHours(0,0,0,0);
+              
+              for (let i = 0; i < 7; i++) {
+                 const d = new Date(startOfWeek);
+                 d.setDate(d.getDate() + i);
+                 if (ev.repeatDays.includes(d.getDay()) && d.getTime() >= anchorDate.getTime()) {
+                    const origStart = new Date(ev.start);
+                    const origEnd = new Date(ev.end);
+                    const durationMs = origEnd.getTime() - origStart.getTime();
+                    
+                    const newStart = new Date(d);
+                    newStart.setHours(origStart.getHours(), origStart.getMinutes(), 0, 0);
+                    const newEnd = new Date(newStart.getTime() + durationMs);
+                    
+                    weekEvents.push({
+                       originalEvent: ev,
+                       virtualStart: formatDateYMD(newStart) + "T" + String(newStart.getHours()).padStart(2, '0') + ":" + String(newStart.getMinutes()).padStart(2, '0') + ":00",
+                       virtualEnd: formatDateYMD(newEnd) + "T" + String(newEnd.getHours()).padStart(2, '0') + ":" + String(newEnd.getMinutes()).padStart(2, '0') + ":00",
+                    });
+                 }
+              }
+           } else {
+              weekEvents.push({
+                 originalEvent: ev,
+                 virtualStart: ev.start,
+                 virtualEnd: ev.end
+              });
+           }
+        });
+
+        weekEvents.forEach((wev) => {
+          const startDate = new Date(wev.virtualStart);
+          const endDate = new Date(wev.virtualEnd);
+          const ev = wev.originalEvent;
           
           let currStart = new Date(startDate);
           while (currStart < endDate) {
@@ -1059,6 +1137,9 @@
         document.getElementById("ev-end").value =
           String(endH).padStart(2, "0") + ":" + String(endM).padStart(2, "0");
 
+        const checkboxes = document.querySelectorAll('#ev-repeat input[type="checkbox"]');
+        checkboxes.forEach(cb => cb.checked = false);
+
         document.getElementById("btn-delete").style.display = "none";
         document.getElementById("modal").style.display = "flex";
         setTimeout(() => document.getElementById("ev-title").focus(), 100);
@@ -1077,6 +1158,12 @@
         );
         document.getElementById("ev-start").value = ev.start.substring(11, 16);
         document.getElementById("ev-end").value = ev.end.substring(11, 16);
+
+        const repeatDays = ev.repeatDays || [];
+        const checkboxes = document.querySelectorAll('#ev-repeat input[type="checkbox"]');
+        checkboxes.forEach(cb => {
+            cb.checked = repeatDays.includes(parseInt(cb.value));
+        });
 
         document.getElementById("btn-delete").style.display = "inline-block";
         document.getElementById("btn-delete").onclick = () => {
@@ -1102,6 +1189,9 @@
         const startTime = document.getElementById("ev-start").value;
         const endTime = document.getElementById("ev-end").value;
 
+        const checkboxes = document.querySelectorAll('#ev-repeat input[type="checkbox"]:checked');
+        const repeatDays = Array.from(checkboxes).map(cb => parseInt(cb.value));
+
         let startDate = new Date(dateStr + "T" + startTime + ":00");
         let endDate = new Date(dateStr + "T" + endTime + ":00");
 
@@ -1120,6 +1210,7 @@
           color: color,
           start: formatDateYMD(startDate) + "T" + String(startDate.getHours()).padStart(2, '0') + ":" + String(startDate.getMinutes()).padStart(2, '0') + ":00",
           end: formatDateYMD(endDate) + "T" + String(endDate.getHours()).padStart(2, '0') + ":" + String(endDate.getMinutes()).padStart(2, '0') + ":00",
+          repeatDays: repeatDays
         };
 
         if (currentEventId) {
