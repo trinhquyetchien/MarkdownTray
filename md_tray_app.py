@@ -205,24 +205,24 @@ class MarkdownTrayApp:
     def build_menu(self):
         menu = Gtk.Menu()
         
-        # Today's Note
-        item_today = Gtk.MenuItem(label="Today's Note")
+        # Today
+        item_today = Gtk.MenuItem(label="Today")
         item_today.connect('activate', lambda w: self.switch_file(self.get_today_filepath()))
         menu.append(item_today)
         
-        # Weekly Calendar
-        item_calendar = Gtk.MenuItem(label="Weekly Calendar")
+        # Calendar
+        item_calendar = Gtk.MenuItem(label="Calendar")
         item_calendar.connect('activate', self.on_show_calendar)
         menu.append(item_calendar)
         
-        # Daily Notes Submenu
+        # Daily List
         daily_menu = self.create_folder_submenu(self.daily_dir)
-        item_daily = Gtk.MenuItem(label="Daily Notes")
+        item_daily = Gtk.MenuItem(label="Daily List")
         item_daily.set_submenu(daily_menu)
         menu.append(item_daily)
         
-        # Edit Daily Path
-        item_edit_daily = Gtk.MenuItem(label="Edit Daily Path...")
+        # Edit Path Daily
+        item_edit_daily = Gtk.MenuItem(label="Edit Path Daily")
         item_edit_daily.connect('activate', self.on_change_daily_directory)
         menu.append(item_edit_daily)
         
@@ -239,7 +239,7 @@ class MarkdownTrayApp:
             menu.append(Gtk.SeparatorMenuItem())
             
         # Add Menu
-        item_add_menu = Gtk.MenuItem(label="Add Menu...")
+        item_add_menu = Gtk.MenuItem(label="Add Menu")
         item_add_menu.connect('activate', self.on_add_menu)
         menu.append(item_add_menu)
         
@@ -507,4 +507,12 @@ class MarkdownTrayApp:
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     app = MarkdownTrayApp()
+    
+    # Cho phép dùng lệnh pkill -SIGUSR1 -f md_tray_app.py để gọi cửa sổ lịch
+    def handle_sigusr1():
+        app.on_show_calendar(None)
+        return True
+        
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, handle_sigusr1)
+    
     Gtk.main()
