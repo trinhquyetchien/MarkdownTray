@@ -214,6 +214,19 @@
         text-overflow: ellipsis;
       }
 
+      .event-resizer {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 6px;
+        cursor: ns-resize;
+        z-index: 10;
+      }
+      .event-resizer:hover {
+        background: rgba(255, 255, 255, 0.3);
+      }
+
       #current-time-line {
         position: absolute;
         left: 0;
@@ -549,7 +562,34 @@
       let activeCol = null;
       let activeDateStr = null;
 
+      let isResizing = false;
+      let resizingEvent = null;
+      let resizingStartY = 0;
+      let resizingInitialEnd = null;
+
       document.addEventListener("mousemove", (e) => {
+        if (isResizing && resizingEvent) {
+          const deltaY = e.clientY - resizingStartY;
+          const deltaMs = (deltaY / PIXELS_PER_HOUR) * 60 * 60 * 1000;
+          
+          let deltaMins = Math.round(deltaMs / (1000 * 60));
+          deltaMins = Math.round(deltaMins / 15) * 15;
+          
+          let snappedEnd = new Date(resizingInitialEnd.getTime() + deltaMins * 60 * 1000);
+          let start = new Date(resizingEvent.start);
+          if (snappedEnd.getTime() - start.getTime() < 15 * 60 * 1000) {
+              snappedEnd = new Date(start.getTime() + 15 * 60 * 1000);
+          }
+          
+          const newEndStr = formatDateYMD(snappedEnd) + "T" + String(snappedEnd.getHours()).padStart(2, '0') + ":" + String(snappedEnd.getMinutes()).padStart(2, '0') + ":00";
+          
+          if (resizingEvent.end !== newEndStr) {
+              resizingEvent.end = newEndStr;
+              renderCalendar();
+          }
+          return;
+        }
+
         if (!isDragging || !dragGhost || !activeCol) return;
         const rect = activeCol.getBoundingClientRect();
         let currentY = e.clientY - rect.top;
@@ -562,6 +602,14 @@
       });
 
       document.addEventListener("mouseup", (e) => {
+        if (isResizing) {
+          isResizing = false;
+          resizingEvent = null;
+          document.body.style.cursor = '';
+          saveEvents();
+          return;
+        }
+
         if (!isDragging) return;
         isDragging = false;
         if (dragGhost) {
@@ -675,10 +723,7 @@
                 const offsetY = window.currentDraggingOffsetY || 0;
                 const rect = col.getBoundingClientRect();
                 let newY = e.clientY - rect.top - offsetY;
-                newY = Math.max(
-                  0,
-                  Math.min(newY, 24 * PIXELS_PER_HOUR - height),
-                );
+                newY = Math.max(0, Math.min(newY, 24 * PIXELS_PER_HOUR));
 
                 let startH = Math.floor(newY / PIXELS_PER_HOUR);
                 let startM = Math.floor(
@@ -688,6 +733,10 @@
                 if (startM === 60) {
                   startH++;
                   startM = 0;
+                }
+                if (startH >= 24) {
+                  startH = 23;
+                  startM = 45;
                 }
 
                 const snappedTop = (startH + startM / 60) * PIXELS_PER_HOUR;
@@ -710,7 +759,11 @@
                 }
 
                 window.dropPlaceholder.style.top = snappedTop + "px";
-                window.dropPlaceholder.style.height = height + "px";
+                let ghostHeight = height;
+                if (snappedTop + ghostHeight > 24 * PIXELS_PER_HOUR) {
+                    ghostHeight = 24 * PIXELS_PER_HOUR - snappedTop;
+                }
+                window.dropPlaceholder.style.height = ghostHeight + "px";
                 window.dropPlaceholder.style.display = "block";
               }
             }
@@ -781,27 +834,47 @@
 
         const dateToEvents = {};
         events.forEach((ev) => {
-          const dateStr = ev.start.substring(0, 10);
-          if (!dateToEvents[dateStr]) dateToEvents[dateStr] = [];
+          const startDate = new Date(ev.start);
+          const endDate = new Date(ev.end);
+          
+          let currStart = new Date(startDate);
+          while (currStart < endDate) {
+            let nextDay = new Date(currStart);
+            nextDay.setHours(24, 0, 0, 0);
+            
+            let currEnd = (endDate < nextDay) ? endDate : nextDay;
+            
+            const dateStr = formatDateYMD(currStart);
+            if (!dateToEvents[dateStr]) dateToEvents[dateStr] = [];
+            
+            const startHour = currStart.getHours();
+            const startMin = currStart.getMinutes();
+            let endHour = currEnd.getHours();
+            let endMin = currEnd.getMinutes();
+            
+            const top = (startHour + startMin / 60) * PIXELS_PER_HOUR;
+            let bottom = (currEnd.getTime() === nextDay.getTime()) ? 24 * PIXELS_PER_HOUR : (endHour + endMin / 60) * PIXELS_PER_HOUR;
+            if (bottom - top < 20) bottom = top + 20;
 
-          const startHour = parseInt(ev.start.substring(11, 13));
-          const startMin = parseInt(ev.start.substring(14, 16));
-          const endHour = parseInt(ev.end.substring(11, 13));
-          const endMin = parseInt(ev.end.substring(14, 16));
-
-          const top = (startHour + startMin / 60) * PIXELS_PER_HOUR;
-          let bottom = (endHour + endMin / 60) * PIXELS_PER_HOUR;
-          if (bottom - top < 20) bottom = top + 20;
-
-          dateToEvents[dateStr].push({
-            ev,
-            top,
-            bottom,
-            startHour,
-            startMin,
-            endHour,
-            endMin,
-          });
+            if (currEnd.getTime() === nextDay.getTime()) {
+                endHour = 24;
+                endMin = 0;
+            }
+            
+            dateToEvents[dateStr].push({
+              ev,
+              top,
+              bottom,
+              startHour,
+              startMin,
+              endHour,
+              endMin,
+              isStart: currStart.getTime() === startDate.getTime(),
+              isEnd: currEnd.getTime() === endDate.getTime()
+            });
+            
+            currStart = nextDay;
+          }
         });
 
         for (const dateStr in dateToEvents) {
@@ -860,11 +933,30 @@
 
             const timeStr = `${String(item.startHour).padStart(2, "0")}:${String(item.startMin).padStart(2, "0")} - ${String(item.endHour).padStart(2, "0")}:${String(item.endMin).padStart(2, "0")}`;
 
+            let resizerHtml = "";
+            if (item.isEnd) {
+                resizerHtml = `<div class="event-resizer"></div>`;
+            }
+
             evDiv.innerHTML = `
                     <div class="event-title">${escapeHtml(item.ev.title)}</div>
                     <div style="font-size: 10px; font-weight: 500; opacity: 0.9; margin-bottom: 2px;">${timeStr}</div>
                     ${item.ev.note ? `<div class="event-note">${escapeHtml(item.ev.note)}</div>` : ""}
+                    ${resizerHtml}
                 `;
+
+            const resizerEl = evDiv.querySelector('.event-resizer');
+            if (resizerEl) {
+              resizerEl.addEventListener("mousedown", (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                isResizing = true;
+                resizingEvent = item.ev;
+                resizingStartY = e.clientY;
+                resizingInitialEnd = new Date(item.ev.end);
+                document.body.style.cursor = 'ns-resize';
+              });
+            }
 
             evDiv.addEventListener("mousedown", (e) => e.stopPropagation());
             evDiv.addEventListener("click", (e) => {
@@ -879,8 +971,6 @@
               e.dataTransfer.setData("text/plain", item.ev.id);
               e.dataTransfer.setData("offsetY", window.currentDraggingOffsetY);
               
-              // Cách an toàn để giấu ảnh lơ lửng khổng lồ của WebKitGTK: 
-              // dùng 1 div trong suốt thay vì Image để tránh crash
               let ghostEl = document.getElementById('drag-ghost-hider');
               if (!ghostEl) {
                   ghostEl = document.createElement('div');
@@ -1010,17 +1100,17 @@
 
         const dateStr = document.getElementById("ev-start").dataset.date;
         const startTime = document.getElementById("ev-start").value;
-        let endTime = document.getElementById("ev-end").value;
+        const endTime = document.getElementById("ev-end").value;
 
-        if (startTime >= endTime) {
-          let [h, m] = startTime.split(":").map(Number);
-          m += 30;
-          if (m >= 60) {
-            h++;
-            m -= 60;
-          }
-          endTime =
-            String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
+        let startDate = new Date(dateStr + "T" + startTime + ":00");
+        let endDate = new Date(dateStr + "T" + endTime + ":00");
+
+        if (endDate <= startDate) {
+           if (startTime === endTime) {
+               endDate = new Date(startDate.getTime() + 30 * 60000);
+           } else {
+               endDate.setDate(endDate.getDate() + 1);
+           }
         }
 
         const newEv = {
@@ -1028,8 +1118,8 @@
           title: title,
           note: note,
           color: color,
-          start: dateStr + "T" + startTime + ":00",
-          end: dateStr + "T" + endTime + ":00",
+          start: formatDateYMD(startDate) + "T" + String(startDate.getHours()).padStart(2, '0') + ":" + String(startDate.getMinutes()).padStart(2, '0') + ":00",
+          end: formatDateYMD(endDate) + "T" + String(endDate.getHours()).padStart(2, '0') + ":" + String(endDate.getMinutes()).padStart(2, '0') + ":00",
         };
 
         if (currentEventId) {
