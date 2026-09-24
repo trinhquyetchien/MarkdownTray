@@ -2,7 +2,8 @@
 
 A lightweight system tray application for Ubuntu/Linux that provides quick access to your daily Markdown notes and project notes. It renders Markdown perfectly and allows you to interactively check off task lists right from the preview window!
 
-![App Screenshot](screenshot.png) <!-- Gắn ảnh chụp màn hình ứng dụng của bạn vào đây (tên file screenshot.png) -->
+![](assets/20260924-164946.png)
+
 
 ## Features
 - **Daily Notes:** Automatically creates and opens `YYYY-MM-DD.md` files so you can quickly log daily tasks.
