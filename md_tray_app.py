@@ -55,7 +55,7 @@ HTML_TEMPLATE = """
                 "line": line,
                 "checked": checkbox.checked
             }};
-            window.webkit.messageHandlers.task_toggled.postMessage(JSON.stringify(msg));
+            window.webkit.messageHandlers.{handler}.postMessage(JSON.stringify(msg));
         }}
     </script>
 </head>
@@ -340,7 +340,7 @@ class MarkdownTrayApp:
                 
             html_content = self.md_parser.render("\n".join(lines))
             
-        full_html = HTML_TEMPLATE.format(css=CSS, content=html_content)
+        full_html = HTML_TEMPLATE.format(css=CSS, content=html_content, handler="task_toggled")
         self.webview.load_html(full_html, "file:///")
         
         self.indicator.set_menu(self.build_menu())
@@ -352,16 +352,34 @@ class MarkdownTrayApp:
             line_idx = msg["line"]
             is_checked = msg["checked"]
             
-            self.toggle_task_in_file(line_idx, is_checked)
+            self.toggle_task_in_file(line_idx, is_checked, self.current_filepath)
+            
+            if self.current_filepath == self.get_today_filepath() and self.calendar_window and self.calendar_window.get_visible():
+                self.update_calendar_preview()
         except Exception as e:
             print("Error parsing message from JS:", e)
 
-    def toggle_task_in_file(self, line_idx, is_checked):
-        if not os.path.exists(self.current_filepath):
+    def on_task_toggled_today(self, manager, message):
+        try:
+            msg_str = message.get_js_value().to_string()
+            msg = json.loads(msg_str)
+            line_idx = msg["line"]
+            is_checked = msg["checked"]
+            
+            today_filepath = self.get_today_filepath()
+            self.toggle_task_in_file(line_idx, is_checked, today_filepath)
+            
+            if self.current_filepath == today_filepath and self.window and self.window.get_visible():
+                self.update_webview()
+        except Exception as e:
+            print("Error parsing message from JS:", e)
+
+    def toggle_task_in_file(self, line_idx, is_checked, filepath):
+        if not os.path.exists(filepath):
             return
             
         try:
-            with open(self.current_filepath, "r", encoding="utf-8") as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 lines = f.read().split("\n")
                 
             if line_idx < len(lines):
@@ -371,11 +389,42 @@ class MarkdownTrayApp:
                 else:
                     lines[line_idx] = re.sub(r'\[[xX]\]', '[ ]', line, count=1)
                     
-            with open(self.current_filepath, "w", encoding="utf-8") as f:
+            with open(filepath, "w", encoding="utf-8") as f:
                 f.write("\n".join(lines))
                 
         except Exception as e:
             print("Error updating file:", e)
+
+    def update_calendar_preview(self):
+        if not self.calendar_window or not hasattr(self, 'cal_preview_webview'):
+            return
+            
+        today_filepath = self.get_today_filepath()
+        if not os.path.exists(today_filepath):
+            date_str = os.path.basename(today_filepath).replace(".md", "")
+            text = f"# {date_str}\n\n<span class='empty-state'>Chưa có ghi chú nào. Hãy tạo file này để bắt đầu.</span>"
+            html_content = self.md_parser.render(text)
+        else:
+            with open(today_filepath, "r", encoding="utf-8") as f:
+                text = f.read()
+                
+            lines = text.split("\n")
+            for i, line in enumerate(lines):
+                line = re.sub(r'^(\s*[-*]\s*)\[ \]\s+', rf'\1<input type="checkbox" onchange="toggleTask(this, {i})"> ', line)
+                line = re.sub(r'^(\s*[-*]\s*)\[[xX]\]\s+', rf'\1<input type="checkbox" checked onchange="toggleTask(this, {i})"> ', line)
+                lines[i] = line
+                
+            html_content = self.md_parser.render("\n".join(lines))
+            
+        full_html = HTML_TEMPLATE.format(css=CSS, content=html_content, handler="task_toggled_today")
+        self.cal_preview_webview.load_html(full_html, "file:///")
+
+    def on_toggle_preview(self, button):
+        if hasattr(self, 'cal_preview_webview'):
+            if button.get_active():
+                self.cal_preview_webview.show()
+            else:
+                self.cal_preview_webview.hide()
 
     def on_show_calendar(self, item):
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -383,9 +432,25 @@ class MarkdownTrayApp:
 
         if not self.calendar_window:
             self.calendar_window = Gtk.Window()
-            self.calendar_window.set_title("Weekly Calendar")
-            self.calendar_window.set_default_size(900, 700)
+            self.calendar_window.set_default_size(1200, 700)
             self.calendar_window.connect("delete-event", self.on_calendar_window_delete)
+            
+            hb = Gtk.HeaderBar()
+            hb.set_show_close_button(True)
+            hb.props.title = "Weekly Calendar"
+            self.calendar_window.set_titlebar(hb)
+            
+            self.toggle_preview_btn = Gtk.ToggleButton()
+            icon = Gtk.Image.new_from_icon_name("view-sidebar-symbolic", Gtk.IconSize.BUTTON)
+            self.toggle_preview_btn.add(icon)
+            self.toggle_preview_btn.set_tooltip_text("Toggle Today's Note")
+            self.toggle_preview_btn.set_active(True)
+            self.toggle_preview_btn.connect("toggled", self.on_toggle_preview)
+            
+            hb.pack_end(self.toggle_preview_btn)
+            
+            self.cal_paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+            self.calendar_window.add(self.cal_paned)
             
             manager = WebKit2.UserContentManager()
             manager.register_script_message_handler("calendar_action")
@@ -393,14 +458,25 @@ class MarkdownTrayApp:
             
             self.cal_webview = WebKit2.WebView.new_with_user_content_manager(manager)
             self.cal_webview.connect("load-changed", self.on_cal_load_changed)
-            self.calendar_window.add(self.cal_webview)
+            self.cal_paned.pack1(self.cal_webview, True, False)
+            
+            preview_manager = WebKit2.UserContentManager()
+            preview_manager.register_script_message_handler("task_toggled_today")
+            preview_manager.connect("script-message-received::task_toggled_today", self.on_task_toggled_today)
+            
+            self.cal_preview_webview = WebKit2.WebView.new_with_user_content_manager(preview_manager)
+            self.cal_paned.pack2(self.cal_preview_webview, False, False)
+            self.cal_paned.set_position(850)
             
         if os.path.exists(cal_html_path):
             self.cal_webview.load_uri("file://" + cal_html_path)
         else:
             print("calendar.html not found at:", cal_html_path)
             
+        self.update_calendar_preview()
         self.calendar_window.show_all()
+        if hasattr(self, 'toggle_preview_btn') and not self.toggle_preview_btn.get_active():
+            self.cal_preview_webview.hide()
         self.calendar_window.present()
 
     def on_cal_load_changed(self, webview, load_event):
