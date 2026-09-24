@@ -41,6 +41,7 @@ li { list-style-type: disc; }
 li:has(input[type="checkbox"]) { list-style-type: none; }
 input[type="checkbox"] { margin-right: 10px; cursor: pointer; }
 .empty-state { color: #888; font-style: italic; }
+img { max-width: 100%; height: auto; display: block; margin: 10px 0; border-radius: 4px; }
 """
 
 HTML_TEMPLATE = """
@@ -427,7 +428,10 @@ class MarkdownTrayApp:
                 self.cal_preview_webview.hide()
 
     def on_show_calendar(self, item):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
+        if getattr(sys, 'frozen', False):
+            script_dir = sys._MEIPASS
+        else:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
         cal_html_path = os.path.join(script_dir, "calendar.html")
 
         if not self.calendar_window:
@@ -444,7 +448,7 @@ class MarkdownTrayApp:
             icon = Gtk.Image.new_from_icon_name("view-sidebar-symbolic", Gtk.IconSize.BUTTON)
             self.toggle_preview_btn.add(icon)
             self.toggle_preview_btn.set_tooltip_text("Toggle Today's Note")
-            self.toggle_preview_btn.set_active(True)
+            self.toggle_preview_btn.set_active(False)
             self.toggle_preview_btn.connect("toggled", self.on_toggle_preview)
             
             hb.pack_end(self.toggle_preview_btn)
