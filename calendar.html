@@ -279,7 +279,7 @@
       }
 
       /* Modal */
-      #modal {
+      #modal, #delete-confirm-modal {
         display: none;
         position: fixed;
         top: 0;
@@ -292,6 +292,10 @@
         z-index: 100;
         align-items: center;
         justify-content: center;
+      }
+      
+      #delete-confirm-modal {
+        z-index: 110;
       }
 
       .modal-content {
@@ -507,6 +511,19 @@
       </div>
     </div>
 
+    <div id="delete-confirm-modal">
+      <div class="modal-content" style="width: 320px; text-align: center;">
+        <h3>Delete Recurring Task</h3>
+        <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px;">This is a repeating task. Which occurrences do you want to delete?</p>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <button onclick="confirmDeleteMode(1)" style="padding: 10px; border-radius: var(--radius); border: 1px solid var(--border-color); background: transparent; color: var(--text-main); cursor: pointer;">This event only</button>
+          <button onclick="confirmDeleteMode(2)" style="padding: 10px; border-radius: var(--radius); border: 1px solid var(--border-color); background: transparent; color: var(--text-main); cursor: pointer;">This and following events</button>
+          <button onclick="confirmDeleteMode(3)" style="padding: 10px; border-radius: var(--radius); border: 1px solid rgba(255, 69, 58, 0.3); background: rgba(255, 69, 58, 0.1); color: var(--btn-danger); cursor: pointer;">All events</button>
+          <button onclick="closeDeleteConfirm()" style="padding: 10px; margin-top: 8px; background: transparent; border: none; color: var(--text-muted); cursor: pointer;">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       function formatTimeInput(el) {
         let v = el.value.replace(/[^0-9]/g, '');
@@ -551,20 +568,13 @@
           if ((e.key === "Delete" || e.key === "Backspace") && hoveredEventId) {
             const ev = events.find((ev) => ev.id === hoveredEventId);
             if (ev && ev.repeatDays && ev.repeatDays.length > 0) {
-              if (confirm("Delete all occurrences? Cancel to delete only this one.")) {
-                events = events.filter((e) => e.id !== hoveredEventId);
-              } else {
-                if (!ev.exceptionDates) ev.exceptionDates = [];
-                if (hoveredEventDate && !ev.exceptionDates.includes(hoveredEventDate)) {
-                  ev.exceptionDates.push(hoveredEventDate);
-                }
-              }
+              openDeleteConfirm(ev.id, hoveredEventDate);
             } else {
               events = events.filter((ev) => ev.id !== hoveredEventId);
+              saveEvents();
             }
             hoveredEventId = null;
             hoveredEventDate = null;
-            saveEvents();
           }
         }
       });
@@ -946,7 +956,7 @@
                  const d = new Date(startOfWeek);
                  d.setDate(d.getDate() + i);
                  const currentDStr = formatDateYMD(d);
-                 if (ev.repeatDays.includes(d.getDay()) && d.getTime() >= anchorDate.getTime() && !(ev.exceptionDates && ev.exceptionDates.includes(currentDStr))) {
+                 if (ev.repeatDays.includes(d.getDay()) && d.getTime() >= anchorDate.getTime() && !(ev.exceptionDates && ev.exceptionDates.includes(currentDStr)) && (!ev.untilDate || currentDStr < ev.untilDate)) {
                     const origStart = new Date(ev.start);
                     const origEnd = new Date(ev.end);
                     const durationMs = origEnd.getTime() - origStart.getTime();
@@ -1240,23 +1250,59 @@
         document.getElementById("btn-delete").style.display = "inline-block";
         document.getElementById("btn-delete").onclick = () => {
           if (ev.repeatDays && ev.repeatDays.length > 0) {
-            if (confirm("Delete all occurrences? Cancel to delete only this one.")) {
-              events = events.filter((e) => e.id !== ev.id);
-            } else {
-              if (!ev.exceptionDates) ev.exceptionDates = [];
-              if (dateStr && !ev.exceptionDates.includes(dateStr)) {
-                ev.exceptionDates.push(dateStr);
-              }
-            }
+            closeModal();
+            openDeleteConfirm(ev.id, dateStr);
           } else {
             events = events.filter((e) => e.id !== ev.id);
+            closeModal();
+            saveEvents();
           }
-          closeModal();
-          saveEvents();
         };
 
         document.getElementById("modal").style.display = "flex";
         setTimeout(() => document.getElementById("ev-title").focus(), 100);
+      }
+
+      let pendingDeleteEventId = null;
+      let pendingDeleteEventDate = null;
+
+      function openDeleteConfirm(evId, dateStr) {
+        pendingDeleteEventId = evId;
+        pendingDeleteEventDate = dateStr;
+        document.getElementById("delete-confirm-modal").style.display = "flex";
+      }
+
+      function closeDeleteConfirm() {
+        document.getElementById("delete-confirm-modal").style.display = "none";
+        pendingDeleteEventId = null;
+        pendingDeleteEventDate = null;
+      }
+
+      function confirmDeleteMode(mode) {
+        if (!pendingDeleteEventId) return;
+        const ev = events.find(e => e.id === pendingDeleteEventId);
+        if (ev) {
+          if (mode === 1) {
+            // This event only
+            if (!ev.exceptionDates) ev.exceptionDates = [];
+            if (pendingDeleteEventDate && !ev.exceptionDates.includes(pendingDeleteEventDate)) {
+              ev.exceptionDates.push(pendingDeleteEventDate);
+            }
+          } else if (mode === 2) {
+            // This and following events
+            // We set untilDate to the current date to stop repeating on or after this date
+            if (pendingDeleteEventDate) {
+              // Wait, if it's mode 2, untilDate should be the dateStr
+              // If untilDate is set, the recurring events on or after this date will be filtered out.
+              ev.untilDate = pendingDeleteEventDate;
+            }
+          } else if (mode === 3) {
+            // All events
+            events = events.filter((e) => e.id !== pendingDeleteEventId);
+          }
+        }
+        closeDeleteConfirm();
+        saveEvents();
       }
 
       function closeModal() {
