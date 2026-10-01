@@ -1,15 +1,13 @@
-name: Build and Release
+name: CI - Test
 
 on:
   push:
     branches: [ "main" ]
-    tags:
-      - 'v*' # Auto create Release when pushing tags like v1.0.0
   pull_request:
     branches: [ "main" ]
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,39 +20,14 @@ jobs:
         sudo apt-get install -y python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1 gir1.2-ayatanaappindicator3-0.1 python3-venv
 
     - name: Set up Python Virtual Environment
-      # Use --system-site-packages so venv can use system gi (PyGObject)
       run: |
         python3 -m venv --system-site-packages venv
         echo "$PWD/venv/bin" >> $GITHUB_PATH
 
     - name: Install Python dependencies
       run: |
-        pip install markdown-it-py>=3.0.0 pyinstaller
+        pip install markdown-it-py>=3.0.0
 
     - name: Test (Syntax Check)
       run: |
-        # Currently no unit tests, running a syntax check instead
         python3 -m py_compile md_tray_app.py
-
-    - name: Build Executable with PyInstaller
-      run: |
-        pyinstaller --name "MarkdownTray" --windowed --add-data "calendar.html:." md_tray_app.py
-        
-        # Archive the built executable
-        cd dist
-        tar -czvf MarkdownTray-linux.tar.gz MarkdownTray/
-
-    - name: Upload Build Artifact (for pushes to main)
-      uses: actions/upload-artifact@v4
-      with:
-        name: MarkdownTray-Linux
-        path: dist/MarkdownTray-linux.tar.gz
-
-    - name: Create GitHub Release (Only on Tags)
-      if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: dist/MarkdownTray-linux.tar.gz
-        generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
