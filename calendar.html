@@ -538,6 +538,7 @@
       let events = [];
       let currentEventId = null;
       let hoveredEventId = null;
+      let hoveredEventDate = null;
 
       document.addEventListener("keydown", (e) => {
         const modal = document.getElementById("modal");
@@ -548,8 +549,21 @@
           }
         } else {
           if ((e.key === "Delete" || e.key === "Backspace") && hoveredEventId) {
-            events = events.filter((ev) => ev.id !== hoveredEventId);
+            const ev = events.find((ev) => ev.id === hoveredEventId);
+            if (ev && ev.repeatDays && ev.repeatDays.length > 0) {
+              if (confirm("Delete all occurrences? Cancel to delete only this one.")) {
+                events = events.filter((e) => e.id !== hoveredEventId);
+              } else {
+                if (!ev.exceptionDates) ev.exceptionDates = [];
+                if (hoveredEventDate && !ev.exceptionDates.includes(hoveredEventDate)) {
+                  ev.exceptionDates.push(hoveredEventDate);
+                }
+              }
+            } else {
+              events = events.filter((ev) => ev.id !== hoveredEventId);
+            }
             hoveredEventId = null;
+            hoveredEventDate = null;
             saveEvents();
           }
         }
@@ -931,7 +945,8 @@
               for (let i = 0; i < 7; i++) {
                  const d = new Date(startOfWeek);
                  d.setDate(d.getDate() + i);
-                 if (ev.repeatDays.includes(d.getDay()) && d.getTime() >= anchorDate.getTime()) {
+                 const currentDStr = formatDateYMD(d);
+                 if (ev.repeatDays.includes(d.getDay()) && d.getTime() >= anchorDate.getTime() && !(ev.exceptionDates && ev.exceptionDates.includes(currentDStr))) {
                     const origStart = new Date(ev.start);
                     const origEnd = new Date(ev.end);
                     const durationMs = origEnd.getTime() - origStart.getTime();
@@ -987,6 +1002,7 @@
             
             dateToEvents[dateStr].push({
               ev,
+              dateStr,
               top,
               bottom,
               startHour,
@@ -1082,14 +1098,20 @@
               });
             }
 
-            evDiv.addEventListener("mouseenter", () => hoveredEventId = item.ev.id);
+            evDiv.addEventListener("mouseenter", () => {
+              hoveredEventId = item.ev.id;
+              hoveredEventDate = item.dateStr;
+            });
             evDiv.addEventListener("mouseleave", () => {
-              if (hoveredEventId === item.ev.id) hoveredEventId = null;
+              if (hoveredEventId === item.ev.id && hoveredEventDate === item.dateStr) {
+                  hoveredEventId = null;
+                  hoveredEventDate = null;
+              }
             });
             evDiv.addEventListener("mousedown", (e) => e.stopPropagation());
             evDiv.addEventListener("click", (e) => {
               e.stopPropagation();
-              openModalForEdit(item.ev);
+              openModalForEdit(item.ev, item.dateStr);
             });
             evDiv.addEventListener("dragstart", (e) => {
               window.currentDraggingEventId = item.ev.id;
@@ -1195,7 +1217,7 @@
         setTimeout(() => document.getElementById("ev-title").focus(), 100);
       }
 
-      function openModalForEdit(ev) {
+      function openModalForEdit(ev, dateStr) {
         currentEventId = ev.id;
         document.getElementById("modal-title").innerText = "Edit Task";
         document.getElementById("ev-title").value = ev.title;
@@ -1217,7 +1239,18 @@
 
         document.getElementById("btn-delete").style.display = "inline-block";
         document.getElementById("btn-delete").onclick = () => {
-          events = events.filter((e) => e.id !== ev.id);
+          if (ev.repeatDays && ev.repeatDays.length > 0) {
+            if (confirm("Delete all occurrences? Cancel to delete only this one.")) {
+              events = events.filter((e) => e.id !== ev.id);
+            } else {
+              if (!ev.exceptionDates) ev.exceptionDates = [];
+              if (dateStr && !ev.exceptionDates.includes(dateStr)) {
+                ev.exceptionDates.push(dateStr);
+              }
+            }
+          } else {
+            events = events.filter((e) => e.id !== ev.id);
+          }
           closeModal();
           saveEvents();
         };
