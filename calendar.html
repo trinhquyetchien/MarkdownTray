@@ -178,9 +178,9 @@
         box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
         border-left: 4px solid rgba(255, 255, 255, 0.4);
         transition:
-          transform 0.15s ease,
-          box-shadow 0.15s ease,
-          filter 0.15s ease;
+          transform 0.30s ease,
+          box-shadow 0.30s ease,
+          filter 0.30s ease;
       }
 
       .event:hover {
@@ -401,7 +401,7 @@
         position: absolute;
         left: 4px;
         right: 4px;
-        background: rgba(10, 132, 255, 0.15);
+        background: rgba(10, 132, 255, 0.30);
         border: 1.5px dashed var(--btn-primary);
         pointer-events: none;
         z-index: 50;
@@ -477,11 +477,11 @@
         <div style="display: flex; gap: 12px">
           <div style="flex: 1">
             <label>Start Time</label>
-            <input type="time" id="ev-start" lang="en-GB" />
+            <input type="text" id="ev-start" placeholder="HH:MM" maxlength="5" oninput="formatTimeInput(this)" onblur="validateTimeInput(this)" />
           </div>
           <div style="flex: 1">
             <label>End Time</label>
-            <input type="time" id="ev-end" lang="en-GB" />
+            <input type="text" id="ev-end" placeholder="HH:MM" maxlength="5" oninput="formatTimeInput(this)" onblur="validateTimeInput(this)" />
           </div>
         </div>
 
@@ -508,10 +508,52 @@
     </div>
 
     <script>
+      function formatTimeInput(el) {
+        let v = el.value.replace(/[^0-9]/g, '');
+        if (v.length >= 3) {
+          v = v.substring(0, 2) + ':' + v.substring(2, 4);
+        }
+        el.value = v;
+      }
+      function validateTimeInput(el) {
+        let v = el.value;
+        if (/^[0-9]{1,2}:[0-9]{2}$/.test(v)) {
+          let parts = v.split(':');
+          let h = parseInt(parts[0]);
+          let m = parseInt(parts[1]);
+          if (h > 23) h = 23;
+          if (m > 59) m = 59;
+          el.value = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+        } else if (/^[0-9]{1,2}$/.test(v)) {
+          let h = parseInt(v);
+          if (h > 23) h = 23;
+          el.value = String(h).padStart(2, '0') + ':00';
+        } else {
+          el.value = "00:00";
+        }
+      }
+
       const PIXELS_PER_HOUR = 60;
       let currentDate = new Date();
       let events = [];
       let currentEventId = null;
+      let hoveredEventId = null;
+
+      document.addEventListener("keydown", (e) => {
+        const modal = document.getElementById("modal");
+        if (modal.style.display === "flex") {
+          if (e.key === "Enter" && document.activeElement.tagName.toLowerCase() !== "textarea") {
+            e.preventDefault();
+            saveModal();
+          }
+        } else {
+          if ((e.key === "Delete" || e.key === "Backspace") && hoveredEventId) {
+            events = events.filter((ev) => ev.id !== hoveredEventId);
+            hoveredEventId = null;
+            saveEvents();
+          }
+        }
+      });
 
       function sendToPython(action, data) {
         if (
@@ -633,6 +675,8 @@
         if (!isDragging || !dragGhost || !activeCol) return;
         const rect = activeCol.getBoundingClientRect();
         let currentY = e.clientY - rect.top;
+        const step = PIXELS_PER_HOUR / 4;
+        currentY = Math.round(currentY / step) * step;
         currentY = Math.max(0, Math.min(currentY, 24 * PIXELS_PER_HOUR));
 
         const top = Math.min(startY, currentY);
@@ -738,6 +782,8 @@
             activeDateStr = dateStr;
             const rect = col.getBoundingClientRect();
             startY = e.clientY - rect.top;
+            const step = PIXELS_PER_HOUR / 4;
+            startY = Math.round(startY / step) * step;
 
             dragGhost = document.createElement("div");
             dragGhost.className = "drag-ghost";
@@ -1036,6 +1082,10 @@
               });
             }
 
+            evDiv.addEventListener("mouseenter", () => hoveredEventId = item.ev.id);
+            evDiv.addEventListener("mouseleave", () => {
+              if (hoveredEventId === item.ev.id) hoveredEventId = null;
+            });
             evDiv.addEventListener("mousedown", (e) => e.stopPropagation());
             evDiv.addEventListener("click", (e) => {
               e.stopPropagation();
@@ -1126,7 +1176,7 @@
         }
         if (startH >= 24) {
           startH = 23;
-          startM = 30;
+          startM = 45;
         }
 
         document.getElementById("ev-start").dataset.date = dateStr;

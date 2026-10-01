@@ -1,3 +1,5 @@
+import os
+os.environ["LC_TIME"] = "en_GB.UTF-8"
 import gi
 import signal
 import sys
@@ -6,6 +8,7 @@ import re
 import json
 import datetime
 import glob
+import subprocess
 
 gi.require_version('Gtk', '3.0')
 gi.require_version('WebKit2', '4.1')
@@ -123,6 +126,57 @@ class MarkdownTrayApp:
         self.current_filepath = self.get_today_filepath()
         
         self.setup_indicator()
+        self.notified_events = set()
+        GLib.timeout_add_seconds(60, self.check_alarms)
+        # Check immediately at startup
+        self.check_alarms()
+
+    def check_alarms(self):
+        now = datetime.datetime.now()
+        current_time_str = now.strftime("%H:%M")
+        current_date_str = now.strftime("%Y-%m-%d")
+        js_weekday = (now.weekday() + 1) % 7
+
+        for ev in self.calendar_events:
+            ev_start = ev.get("start", "")
+            if not ev_start: continue
+            
+            ev_date = ev_start[:10]
+            ev_time = ev_start[11:16]
+            
+            is_today = False
+            repeat_days = ev.get("repeatDays", [])
+            if repeat_days:
+                try:
+                    anchor_date = datetime.datetime.strptime(ev_date, "%Y-%m-%d").date()
+                    if now.date() >= anchor_date and js_weekday in repeat_days:
+                        is_today = True
+                except ValueError:
+                    pass
+            else:
+                if ev_date == current_date_str:
+                    is_today = True
+                    
+            if is_today and ev_time == current_time_str:
+                ev_id = ev.get("id", str(id(ev)))
+                event_key = f"{ev_id}_{current_date_str}_{ev_time}"
+                if event_key not in self.notified_events:
+                    self.notified_events.add(event_key)
+                    self.trigger_alarm(ev)
+                    
+        # Clean up old notified events daily (simple approach)
+        if now.hour == 0 and now.minute == 0:
+            self.notified_events.clear()
+            
+        return True
+
+    def trigger_alarm(self, ev):
+        title = ev.get("title", "Task Reminder")
+        note = ev.get("note", "")
+        try:
+            subprocess.Popen(["notify-send", "-a", "Markdown Tray", f"🔔 {title}", note])
+        except Exception as e:
+            print("Failed to send notification:", e)
 
     def load_config(self):
         default_dir = os.path.expanduser("~/Note/Daily")
