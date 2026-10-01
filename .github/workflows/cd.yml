@@ -1,0 +1,46 @@
+name: CD - Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Chỉ chạy khi push tag bắt đầu bằng v (vd: v1.0.0)
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies (GTK, WebKit)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1 gir1.2-ayatanaappindicator3-0.1 python3-venv
+
+    - name: Set up Python Virtual Environment
+      run: |
+        python3 -m venv --system-site-packages venv
+        echo "$PWD/venv/bin" >> $GITHUB_PATH
+
+    - name: Install Python dependencies
+      run: |
+        pip install markdown-it-py>=3.0.0 pyinstaller
+
+    - name: Build Executable with PyInstaller
+      run: |
+        pyinstaller --name "MarkdownTray" --windowed --add-data "calendar.html:." md_tray_app.py
+        
+        # Nén file để upload
+        cd dist
+        tar -czvf MarkdownTray-linux.tar.gz MarkdownTray/
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/MarkdownTray-linux.tar.gz
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
