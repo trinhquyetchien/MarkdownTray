@@ -232,7 +232,8 @@ class MarkdownTrayApp:
             "text-x-generic",
             AyatanaAppIndicator3.IndicatorCategory.APPLICATION_STATUS)
         self.indicator.set_status(AyatanaAppIndicator3.IndicatorStatus.ACTIVE)
-        self.indicator.set_menu(self.build_menu())
+        self.menu = self.build_menu()
+        self.indicator.set_menu(self.menu)
 
     def create_folder_submenu(self, folder_path):
         submenu = Gtk.Menu()
@@ -320,7 +321,8 @@ class MarkdownTrayApp:
             self.daily_dir = new_dir
             self.save_config()
             self.current_filepath = self.get_today_filepath()
-            self.indicator.set_menu(self.build_menu())
+            self.menu = self.build_menu()
+            self.indicator.set_menu(self.menu)
             if self.window and self.window.get_visible():
                 self.window.set_title(f"Notes - {os.path.basename(self.current_filepath)}")
                 self.update_webview()
@@ -342,7 +344,8 @@ class MarkdownTrayApp:
                     "path": folder
                 })
                 self.save_config()
-                self.indicator.set_menu(self.build_menu())
+                self.menu = self.build_menu()
+                self.indicator.set_menu(self.menu)
                 
         dialog.destroy()
 
@@ -398,7 +401,8 @@ class MarkdownTrayApp:
         full_html = HTML_TEMPLATE.format(css=CSS, content=html_content, handler="task_toggled")
         self.webview.load_html(full_html, "file:///")
         
-        self.indicator.set_menu(self.build_menu())
+        self.menu = self.build_menu()
+        self.indicator.set_menu(self.menu)
 
     def on_task_toggled(self, manager, message):
         try:
