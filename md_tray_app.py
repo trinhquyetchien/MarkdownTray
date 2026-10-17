@@ -124,12 +124,26 @@ class MarkdownTrayApp:
         self.calendar_window = None
         self.md_parser = MarkdownIt("commonmark", {"html": True})
         self.current_filepath = self.get_today_filepath()
-        
+        self.setup_window_icons()
         self.setup_indicator()
         self.notified_events = set()
         GLib.timeout_add_seconds(60, self.check_alarms)
         # Check immediately at startup
         self.check_alarms()
+
+    def setup_window_icons(self):
+        Gtk.Window.set_default_icon_name("md-tray-app")
+        for p in [
+            os.path.expanduser("~/.local/share/icons/hicolor/scalable/apps/md-tray-app.svg"),
+            os.path.expanduser("~/.local/share/icons/hicolor/128x128/apps/md-tray-app.png"),
+            os.path.expanduser("~/.local/share/icons/md-tray-app.png")
+        ]:
+            if os.path.exists(p):
+                try:
+                    Gtk.Window.set_default_icon_from_file(p)
+                    break
+                except Exception:
+                    pass
 
     def check_alarms(self):
         now = datetime.datetime.now()
@@ -150,7 +164,10 @@ class MarkdownTrayApp:
                 try:
                     anchor_date = datetime.datetime.strptime(ev_date, "%Y-%m-%d").date()
                     if now.date() >= anchor_date and js_weekday in repeat_days:
-                        is_today = True
+                        if current_date_str not in ev.get("exceptionDates", []):
+                            until_date = ev.get("untilDate")
+                            if not until_date or current_date_str < until_date:
+                                is_today = True
                 except ValueError:
                     pass
             else:
@@ -227,10 +244,12 @@ class MarkdownTrayApp:
         return os.path.join(self.daily_dir, today_str)
 
     def setup_indicator(self):
-        self.indicator = AyatanaAppIndicator3.Indicator.new(
+        icon_theme_dir = os.path.expanduser("~/.local/share/icons")
+        self.indicator = AyatanaAppIndicator3.Indicator.new_with_path(
             "md_tray_app",
-            "text-x-generic",
-            AyatanaAppIndicator3.IndicatorCategory.APPLICATION_STATUS)
+            "md-tray-app",
+            AyatanaAppIndicator3.IndicatorCategory.APPLICATION_STATUS,
+            icon_theme_dir)
         self.indicator.set_status(AyatanaAppIndicator3.IndicatorStatus.ACTIVE)
         self.menu = self.build_menu()
         self.indicator.set_menu(self.menu)
@@ -263,7 +282,7 @@ class MarkdownTrayApp:
         
         # Today
         item_today = Gtk.MenuItem(label="Today")
-        item_today.connect('activate', lambda w: self.switch_file(self.get_today_filepath()))
+        item_today.connect('activate', lambda w: self.show_today_note())
         menu.append(item_today)
         
         # Calendar
@@ -349,10 +368,25 @@ class MarkdownTrayApp:
                 
         dialog.destroy()
 
+    def show_today_note(self):
+        today_file = self.get_today_filepath()
+        if self.window and self.window.get_visible() and self.current_filepath == today_file:
+            if self.window.is_active():
+                self.window.hide()
+                return
+            else:
+                self.window.present()
+                return
+        self.switch_file(today_file)
+
     def switch_file(self, filepath):
         if self.window and self.window.get_visible() and self.current_filepath == filepath:
-            self.window.hide()
-            return
+            if self.window.is_active():
+                self.window.hide()
+                return
+            else:
+                self.window.present()
+                return
             
         self.current_filepath = filepath
         if self.window:
@@ -485,12 +519,50 @@ class MarkdownTrayApp:
             else:
                 self.cal_preview_webview.hide()
 
-    def on_show_calendar(self, item):
+    def get_calendar_html_path(self):
+        candidate_dirs = []
         if getattr(sys, 'frozen', False):
-            script_dir = sys._MEIPASS
+            candidate_dirs.append(sys._MEIPASS)
         else:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-        cal_html_path = os.path.join(script_dir, "calendar.html")
+            candidate_dirs.append(os.path.dirname(os.path.abspath(__file__)))
+            try:
+                candidate_dirs.append(os.path.dirname(os.path.realpath(__file__)))
+            except Exception:
+                pass
+
+        candidate_dirs.extend([
+            os.path.expanduser("~/.local/bin"),
+            os.path.expanduser("~/Dotfiles/desktop/.local/bin"),
+            os.path.expanduser("~/Projects/Main/Personal/MarkdownTray"),
+            os.path.expanduser("~/.config/md-tray-app"),
+            os.path.expanduser("~/.local/share/md-tray-app")
+        ])
+
+        for d in candidate_dirs:
+            if not d:
+                continue
+            path = os.path.join(d, "calendar.html")
+            if os.path.isfile(path):
+                return path
+        return None
+
+    def on_show_calendar(self, item=None):
+        if self.calendar_window and self.calendar_window.get_visible():
+            if self.calendar_window.is_active():
+                self.calendar_window.hide()
+                return
+            else:
+                self.calendar_window.present()
+                return
+
+        cal_html_path = self.get_calendar_html_path()
+        if not cal_html_path:
+            print("calendar.html not found in any candidate path!")
+            try:
+                subprocess.Popen(["notify-send", "-a", "Markdown Tray", "Calendar Error", "calendar.html not found!"])
+            except Exception:
+                pass
+            return
 
         if not self.calendar_window:
             self.calendar_window = Gtk.Window()
@@ -530,10 +602,13 @@ class MarkdownTrayApp:
             self.cal_paned.pack2(self.cal_preview_webview, False, False)
             self.cal_paned.set_position(850)
             
-        if os.path.exists(cal_html_path):
+            self._cal_loaded = False
             self.cal_webview.load_uri("file://" + cal_html_path)
         else:
-            print("calendar.html not found at:", cal_html_path)
+            self.load_calendar()
+            events_json = json.dumps(self.calendar_events)
+            js_safe_json = json.dumps(events_json)
+            self.cal_webview.run_javascript(f"loadData({js_safe_json});", None, None, None)
             
         self.update_calendar_preview()
         self.calendar_window.show_all()
@@ -543,6 +618,7 @@ class MarkdownTrayApp:
 
     def on_cal_load_changed(self, webview, load_event):
         if load_event == WebKit2.LoadEvent.FINISHED:
+            self._cal_loaded = True
             # Inject data
             events_json = json.dumps(self.calendar_events)
             js_safe_json = json.dumps(events_json)
@@ -570,11 +646,29 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     app = MarkdownTrayApp()
     
-    # Cho phép dùng lệnh pkill -SIGUSR1 -f md_tray_app.py để gọi cửa sổ lịch
-    def handle_sigusr1():
-        app.on_show_calendar(None)
+    # Cho phép gọi cửa sổ lịch qua SIGHUP (tránh xung đột SIGUSR1 với WebKit GC)
+    def handle_calendar_signal():
+        try:
+            app.on_show_calendar(None)
+        except Exception as e:
+            print("Error showing calendar:", e)
         return True
         
-    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, handle_sigusr1)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGHUP, handle_calendar_signal)
     
+    # Cho phép gọi ghi chú hôm nay (task) qua SIGUSR2
+    def handle_task_signal():
+        try:
+            app.show_today_note()
+        except Exception as e:
+            print("Error showing today note:", e)
+        return True
+
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR2, handle_task_signal)
+    
+    if "--calendar" in sys.argv:
+        GLib.idle_add(app.on_show_calendar, None)
+    elif "--task" in sys.argv or "--today" in sys.argv:
+        GLib.idle_add(app.show_today_note)
+        
     Gtk.main()
