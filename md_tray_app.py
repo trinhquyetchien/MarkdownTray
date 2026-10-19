@@ -151,7 +151,7 @@ class DeleteMenuDialog(Gtk.Dialog):
 
 
 class EditPathsDialog(Gtk.Dialog):
-    def __init__(self, parent=None, daily_dir="", daily_alias="", deadline_dir="", deadline_alias="", custom_menus=None):
+    def __init__(self, parent=None, daily_dir="", daily_alias="", deadline_file="", deadline_alias="", custom_menus=None, deadline_dir=""):
         super().__init__(title="Edit Paths", transient_for=parent, flags=0)
         self.add_buttons(
             Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
@@ -159,6 +159,7 @@ class EditPathsDialog(Gtk.Dialog):
         )
         self.set_default_size(520, 420)
         self.custom_menus = [dict(m) for m in (custom_menus or [])]
+        deadline_target = deadline_file or deadline_dir
         
         box = self.get_content_area()
         box.set_spacing(10)
@@ -199,7 +200,7 @@ class EditPathsDialog(Gtk.Dialog):
         
         # Section Deadline
         lbl_dl_sec = Gtk.Label(xalign=0)
-        lbl_dl_sec.set_markup("<b>Deadline Notes:</b>")
+        lbl_dl_sec.set_markup("<b>Deadline Note:</b>")
         grid.attach(lbl_dl_sec, 0, 4, 3, 1)
         
         lbl_dl_alias = Gtk.Label(label="Alias:", xalign=0)
@@ -211,12 +212,32 @@ class EditPathsDialog(Gtk.Dialog):
         grid.attach(self.entry_deadline_alias, 1, 5, 2, 1)
         
         lbl_dl_path = Gtk.Label(label="Path:", xalign=0)
-        self.btn_deadline_folder = Gtk.FileChooserButton(title="Select Deadline Folder", action=Gtk.FileChooserAction.SELECT_FOLDER)
-        if deadline_dir and os.path.exists(deadline_dir):
-            self.btn_deadline_folder.set_current_folder(deadline_dir)
-        self.btn_deadline_folder.set_hexpand(True)
+        self.btn_deadline_file = Gtk.FileChooserButton(title="Select Deadline File", action=Gtk.FileChooserAction.OPEN)
+        f_md = Gtk.FileFilter()
+        f_md.set_name("Markdown files (*.md)")
+        f_md.add_pattern("*.md")
+        self.btn_deadline_file.add_filter(f_md)
+        f_all = Gtk.FileFilter()
+        f_all.set_name("All files (*.*)")
+        f_all.add_pattern("*")
+        self.btn_deadline_file.add_filter(f_all)
+        self.btn_deadline_file.set_filter(f_md)
+
+        if deadline_target:
+            if os.path.isdir(deadline_target):
+                c_cap = os.path.join(deadline_target, "Deadline.md")
+                c_low = os.path.join(deadline_target, "deadline.md")
+                deadline_target = c_cap if os.path.exists(c_cap) or not os.path.exists(c_low) else c_low
+            if os.path.exists(deadline_target):
+                self.btn_deadline_file.set_filename(deadline_target)
+            else:
+                d = os.path.dirname(deadline_target)
+                if os.path.exists(d):
+                    self.btn_deadline_file.set_current_folder(d)
+        self.btn_deadline_file.set_hexpand(True)
+        self.btn_deadline_folder = self.btn_deadline_file
         grid.attach(lbl_dl_path, 0, 6, 1, 1)
-        grid.attach(self.btn_deadline_folder, 1, 6, 2, 1)
+        grid.attach(self.btn_deadline_file, 1, 6, 2, 1)
         
         box.pack_start(grid, False, False, 0)
         
@@ -352,12 +373,25 @@ class MarkdownTrayApp:
         except Exception as e:
             print("Failed to send notification:", e)
 
+    @property
+    def deadline_dir(self):
+        return os.path.dirname(self.deadline_file) if getattr(self, 'deadline_file', None) else ""
+
+    @deadline_dir.setter
+    def deadline_dir(self, val):
+        if val and os.path.isdir(val):
+            c_cap = os.path.join(val, "Deadline.md")
+            c_low = os.path.join(val, "deadline.md")
+            self.deadline_file = c_cap if os.path.exists(c_cap) or not os.path.exists(c_low) else c_low
+        else:
+            self.deadline_file = val
+
     def load_config(self):
         default_daily = os.path.expanduser("~/Note/Daily")
-        default_deadline = os.path.expanduser("~/Note/Deadline")
+        default_deadline = os.path.expanduser("~/Note/Deadline/Deadline.md")
         self.daily_dir = default_daily
         self.daily_alias = "Daily List"
-        self.deadline_dir = default_deadline
+        self.deadline_file = default_deadline
         self.deadline_alias = "Deadline"
         self.custom_menus = []
         
@@ -371,8 +405,23 @@ class MarkdownTrayApp:
                     else:
                         self.daily_dir = config.get("daily_dir", default_daily)
                     self.daily_alias = config.get("daily_alias", "Daily List")
-                    self.deadline_dir = config.get("deadline_dir", default_deadline)
-                    self.deadline_alias = config.get("deadline_alias", "Deadline")
+                    
+                    # Support deadline_file (new), deadline_path, and deadline_dir (legacy)
+                    dl_val = config.get("deadline_file") or config.get("deadline_path") or config.get("deadline_dir")
+                    if dl_val:
+                        if os.path.isdir(dl_val):
+                            c_cap = os.path.join(dl_val, "Deadline.md")
+                            c_low = os.path.join(dl_val, "deadline.md")
+                            self.deadline_file = c_cap if os.path.exists(c_cap) or not os.path.exists(c_low) else c_low
+                        else:
+                            self.deadline_file = dl_val
+                    else:
+                        self.deadline_file = default_deadline
+                    
+                    alias_val = config.get("deadline_alias", "Deadline")
+                    if alias_val == "deadline":
+                        alias_val = "Deadline"
+                    self.deadline_alias = alias_val
                     self.custom_menus = config.get("custom_menus", [])
             except Exception as e:
                 print("Error loading config:", e)
@@ -384,21 +433,23 @@ class MarkdownTrayApp:
             json.dump({
                 "daily_dir": self.daily_dir,
                 "daily_alias": self.daily_alias,
-                "deadline_dir": self.deadline_dir,
+                "deadline_file": self.deadline_file,
                 "deadline_alias": self.deadline_alias,
                 "custom_menus": self.custom_menus
             }, f, indent=2)
 
     def ensure_directories(self):
         os.makedirs(self.daily_dir, exist_ok=True)
-        os.makedirs(self.deadline_dir, exist_ok=True)
-        starter_file = os.path.join(self.deadline_dir, "deadline.md")
-        if not glob.glob(os.path.join(self.deadline_dir, "*.md")):
-            try:
-                with open(starter_file, "w", encoding="utf-8") as f:
-                    f.write("# Deadlines\n\n- [ ] Important deadline\n")
-            except Exception as e:
-                print("Error creating initial deadline note:", e)
+        if self.deadline_file:
+            d_dir = os.path.dirname(self.deadline_file)
+            if d_dir:
+                os.makedirs(d_dir, exist_ok=True)
+            if not os.path.exists(self.deadline_file) or os.path.getsize(self.deadline_file) == 0:
+                try:
+                    with open(self.deadline_file, "w", encoding="utf-8") as f:
+                        f.write("# Deadlines\n\n- [ ] Important deadline\n")
+                except Exception as e:
+                    print("Error creating initial deadline note:", e)
 
     def load_calendar(self):
         if os.path.exists(self.calendar_file):
@@ -481,9 +532,8 @@ class MarkdownTrayApp:
         menu.append(item_calendar)
         
         # Deadline
-        deadline_menu = self.create_folder_submenu(self.deadline_dir)
         item_deadline = Gtk.MenuItem(label=self.deadline_alias or "Deadline")
-        item_deadline.set_submenu(deadline_menu)
+        item_deadline.connect('activate', lambda w: self.show_deadline_note())
         menu.append(item_deadline)
         
         # Daily List
@@ -529,7 +579,7 @@ class MarkdownTrayApp:
         dialog = EditPathsDialog(
             daily_dir=self.daily_dir,
             daily_alias=self.daily_alias,
-            deadline_dir=self.deadline_dir,
+            deadline_file=self.deadline_file,
             deadline_alias=self.deadline_alias,
             custom_menus=self.custom_menus
         )
@@ -538,18 +588,19 @@ class MarkdownTrayApp:
         if response == Gtk.ResponseType.OK:
             new_daily = dialog.btn_daily_folder.get_filename() or self.daily_dir
             new_daily_alias = dialog.entry_daily_alias.get_text().strip() or "Daily List"
-            new_deadline = dialog.btn_deadline_folder.get_filename() or self.deadline_dir
+            new_deadline = dialog.btn_deadline_file.get_filename() or self.deadline_file
             new_deadline_alias = dialog.entry_deadline_alias.get_text().strip() or "Deadline"
             
             self.daily_dir = new_daily
             self.daily_alias = new_daily_alias
-            self.deadline_dir = new_deadline
+            self.deadline_file = new_deadline
             self.deadline_alias = new_deadline_alias
             self.custom_menus = dialog.custom_menus
             
             self.ensure_directories()
             self.save_config()
-            self.current_filepath = self.get_today_filepath()
+            if not os.path.exists(self.current_filepath):
+                self.current_filepath = self.get_today_filepath()
             self.menu = self.build_menu()
             self.indicator.set_menu(self.menu)
             if self.window and self.window.get_visible():
@@ -626,19 +677,18 @@ class MarkdownTrayApp:
         dialog.destroy()
 
     def show_deadline_note(self):
-        files = glob.glob(os.path.join(self.deadline_dir, "*.md"))
-        files.sort(reverse=True)
-        if files:
-            target = files[0]
-        else:
-            target = os.path.join(self.deadline_dir, "deadline.md")
-            if not os.path.exists(target):
-                try:
-                    with open(target, "w", encoding="utf-8") as f:
-                        f.write("# Deadlines\n\n- [ ] Example deadline task\n")
-                except Exception:
-                    pass
-        self.switch_file(target)
+        if not self.deadline_file:
+            return
+        if not os.path.exists(self.deadline_file) or os.path.getsize(self.deadline_file) == 0:
+            try:
+                d_dir = os.path.dirname(self.deadline_file)
+                if d_dir:
+                    os.makedirs(d_dir, exist_ok=True)
+                with open(self.deadline_file, "w", encoding="utf-8") as f:
+                    f.write("# Deadlines\n\n- [ ] Example deadline task\n")
+            except Exception as e:
+                print("Error creating deadline note:", e)
+        self.switch_file(self.deadline_file)
 
     def show_today_note(self):
         today_file = self.get_today_filepath()
