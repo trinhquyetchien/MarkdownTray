@@ -352,7 +352,7 @@
         background: var(--bg-modal);
         padding: 28px;
         border-radius: 12px;
-        width: 360px;
+        width: 380px;
         box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
         border: 1px solid var(--border-color);
         color: var(--text-main);
@@ -457,18 +457,20 @@
       .modal-buttons {
         display: flex;
         justify-content: flex-end;
-        gap: 10px;
+        align-items: center;
+        gap: 8px;
       }
 
       .modal-buttons button {
-        padding: 10px 18px;
+        padding: 9px 15px;
         border: none;
         border-radius: var(--radius);
         cursor: pointer;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 600;
         font-family: inherit;
-        transition: background 0.2s;
+        transition: background 0.2s, border-color 0.2s;
+        white-space: nowrap;
       }
 
       .btn-cancel {
@@ -498,6 +500,46 @@
 
       .btn-delete:hover {
         background: rgba(255, 69, 58, 0.2);
+      }
+
+      .btn-duplicate {
+        background: var(--btn-bg);
+        color: var(--text-main);
+        border: 1px solid var(--border-color) !important;
+      }
+
+      .btn-duplicate:hover {
+        background: var(--btn-hover);
+        border-color: var(--text-muted) !important;
+      }
+
+      .event-duplicate-btn {
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        width: 22px;
+        height: 22px;
+        border-radius: 4px;
+        background: rgba(0, 0, 0, 0.25);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: inherit;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        padding: 0;
+        opacity: 0.85;
+        transition: opacity 0.15s, background 0.15s;
+        z-index: 15;
+      }
+
+      .event:hover .event-duplicate-btn {
+        display: flex;
+      }
+
+      .event-duplicate-btn:hover {
+        opacity: 1;
+        background: rgba(0, 0, 0, 0.45);
       }
 
       .drag-ghost {
@@ -611,6 +653,7 @@
 
         <div class="modal-buttons">
           <button id="btn-delete" class="btn-delete">Delete</button>
+          <button id="btn-duplicate" class="btn-duplicate" onclick="duplicateModal()">Duplicate</button>
           <button onclick="closeModal()" class="btn-cancel">Cancel</button>
           <button onclick="saveModal()" class="btn-save">Save</button>
         </div>
@@ -709,6 +752,9 @@
           if (e.key === "Escape") {
             e.preventDefault();
             closeModal();
+          } else if ((e.ctrlKey || e.metaKey) && (e.key === "d" || e.key === "D")) {
+            e.preventDefault();
+            duplicateModal();
           } else if (e.key === "Enter" && document.activeElement.tagName.toLowerCase() !== "textarea") {
             e.preventDefault();
             saveModal();
@@ -730,6 +776,11 @@
             }
             hoveredEventId = null;
             hoveredEventDate = null;
+          } else if ((e.key === "d" || e.key === "D") && hoveredEventId && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            const ev = events.find((ev) => ev.id === hoveredEventId);
+            if (ev) {
+              duplicateEvent(ev, hoveredEventDate);
+            }
           }
         }
       });
@@ -825,30 +876,71 @@
 
       let isResizing = false;
       let resizingEvent = null;
-      let resizingEventDate = null;
-      let resizingStartY = 0;
-      let resizingInitialEnd = null;
+      let resizingOccurrenceDate = null;
+      let resizingOccurrenceStart = null;
       let resizingOriginalEndStr = null;
+      let resizingCurrentDurationMs = null;
 
       document.addEventListener("mousemove", (e) => {
         if (isResizing && resizingEvent) {
-          const deltaY = e.clientY - resizingStartY;
-          const deltaMs = (deltaY / PIXELS_PER_HOUR) * 60 * 60 * 1000;
-          
-          let deltaMins = Math.round(deltaMs / (1000 * 60));
-          deltaMins = Math.round(deltaMins / 15) * 15;
-          
-          let snappedEnd = new Date(resizingInitialEnd.getTime() + deltaMins * 60 * 1000);
-          let start = new Date(resizingEvent.start);
-          if (snappedEnd.getTime() - start.getTime() < 15 * 60 * 1000) {
-              snappedEnd = new Date(start.getTime() + 15 * 60 * 1000);
+          const dayCols = Array.from(document.querySelectorAll("#days-bg .day-col"));
+          let targetCol = null;
+          for (const col of dayCols) {
+            const r = col.getBoundingClientRect();
+            if (e.clientX >= r.left && e.clientX < r.right) {
+              targetCol = col;
+              break;
+            }
           }
-          
-          const newEndStr = formatDateYMD(snappedEnd) + "T" + String(snappedEnd.getHours()).padStart(2, '0') + ":" + String(snappedEnd.getMinutes()).padStart(2, '0') + ":00";
-          
-          if (resizingEvent.end !== newEndStr) {
+          if (!targetCol && dayCols.length > 0) {
+            const firstR = dayCols[0].getBoundingClientRect();
+            const lastR = dayCols[dayCols.length - 1].getBoundingClientRect();
+            if (e.clientX < firstR.left) targetCol = dayCols[0];
+            else if (e.clientX >= lastR.left) targetCol = dayCols[dayCols.length - 1];
+          }
+
+          if (targetCol && resizingOccurrenceStart) {
+            const rect = targetCol.getBoundingClientRect();
+            const targetDateStr = targetCol.dataset.date;
+            let y = e.clientY - rect.top;
+            y = Math.max(0, Math.min(y, 24 * PIXELS_PER_HOUR));
+
+            let hour = Math.floor(y / PIXELS_PER_HOUR);
+            let min = Math.floor(((y % PIXELS_PER_HOUR) / PIXELS_PER_HOUR) * 60);
+            min = Math.round(min / 15) * 15;
+            if (min === 60) {
+              hour++;
+              min = 0;
+            }
+            if (hour >= 24) {
+              hour = 24;
+              min = 0;
+            }
+
+            let candidateEnd = new Date(targetDateStr + "T00:00:00");
+            if (hour === 24) {
+              candidateEnd.setDate(candidateEnd.getDate() + 1);
+              candidateEnd.setHours(0, 0, 0, 0);
+            } else {
+              candidateEnd.setHours(hour, min, 0, 0);
+            }
+
+            const minDurationMs = 15 * 60 * 1000;
+            if (candidateEnd.getTime() - resizingOccurrenceStart.getTime() < minDurationMs) {
+              candidateEnd = new Date(resizingOccurrenceStart.getTime() + minDurationMs);
+            }
+
+            const newDurationMs = candidateEnd.getTime() - resizingOccurrenceStart.getTime();
+            resizingCurrentDurationMs = newDurationMs;
+
+            const baseStart = new Date(resizingEvent.start);
+            const newAnchorEnd = new Date(baseStart.getTime() + newDurationMs);
+            const newEndStr = formatDateYMD(newAnchorEnd) + "T" + String(newAnchorEnd.getHours()).padStart(2, '0') + ":" + String(newAnchorEnd.getMinutes()).padStart(2, '0') + ":00";
+
+            if (resizingEvent.end !== newEndStr) {
               resizingEvent.end = newEndStr;
               renderCalendar();
+            }
           }
           return;
         }
@@ -870,13 +962,16 @@
         if (isResizing) {
           isResizing = false;
           const ev = resizingEvent;
-          const occDate = resizingEventDate;
+          const occDate = resizingOccurrenceDate;
           const origEndStr = resizingOriginalEndStr;
           const finalEndStr = ev ? ev.end : null;
+          const finalDurationMs = resizingCurrentDurationMs;
 
           resizingEvent = null;
-          resizingEventDate = null;
+          resizingOccurrenceDate = null;
+          resizingOccurrenceStart = null;
           resizingOriginalEndStr = null;
+          resizingCurrentDurationMs = null;
           document.body.style.cursor = '';
 
           if (!ev || origEndStr === finalEndStr) {
@@ -887,14 +982,13 @@
             ev.end = origEndStr;
             renderCalendar();
 
-            const newDurationMs = new Date(finalEndStr).getTime() - new Date(ev.start).getTime();
             openRecurringConfirm({
               action: "resize",
               ev: ev,
               occurrenceDate: occDate,
               origEndStr: origEndStr,
               finalEndStr: finalEndStr,
-              newDurationMs: newDurationMs
+              newDurationMs: finalDurationMs
             });
             return;
           }
@@ -1213,6 +1307,8 @@
             dateToEvents[dateStr].push({
               ev,
               dateStr,
+              virtualStart: wev.virtualStart,
+              virtualEnd: wev.virtualEnd,
               top,
               bottom,
               startHour,
@@ -1302,8 +1398,25 @@
                     <div class="event-title">${escapeHtml(item.ev.title)}</div>
                     <div class="event-time">${timeStr}</div>
                     ${item.ev.note ? `<div class="event-note">${escapeHtml(item.ev.note)}</div>` : ""}
+                    <button class="event-duplicate-btn" title="Duplicate task" type="button">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                      </svg>
+                    </button>
                     ${resizerHtml}
                 `;
+
+            const itemOccDate = item.virtualStart ? item.virtualStart.substring(0, 10) : item.dateStr;
+
+            const dupBtn = evDiv.querySelector('.event-duplicate-btn');
+            if (dupBtn) {
+              dupBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+              dupBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                duplicateEvent(item.ev, itemOccDate);
+              });
+            }
 
             const resizerEl = evDiv.querySelector('.event-resizer');
             if (resizerEl) {
@@ -1312,9 +1425,10 @@
                 e.preventDefault();
                 isResizing = true;
                 resizingEvent = item.ev;
-                resizingEventDate = item.dateStr;
-                resizingStartY = e.clientY;
-                resizingInitialEnd = new Date(item.ev.end);
+                resizingOccurrenceDate = itemOccDate;
+                resizingOccurrenceStart = new Date(item.virtualStart || item.ev.start);
+                const currentEnd = new Date(item.virtualEnd || item.ev.end);
+                resizingCurrentDurationMs = currentEnd.getTime() - resizingOccurrenceStart.getTime();
                 resizingOriginalEndStr = item.ev.end;
                 document.body.style.cursor = 'ns-resize';
               });
@@ -1322,10 +1436,10 @@
 
             evDiv.addEventListener("mouseenter", () => {
               hoveredEventId = item.ev.id;
-              hoveredEventDate = item.dateStr;
+              hoveredEventDate = itemOccDate;
             });
             evDiv.addEventListener("mouseleave", () => {
-              if (hoveredEventId === item.ev.id && hoveredEventDate === item.dateStr) {
+              if (hoveredEventId === item.ev.id && hoveredEventDate === itemOccDate) {
                   hoveredEventId = null;
                   hoveredEventDate = null;
               }
@@ -1333,16 +1447,16 @@
             evDiv.addEventListener("mousedown", (e) => e.stopPropagation());
             evDiv.addEventListener("click", (e) => {
               e.stopPropagation();
-              openModalForEdit(item.ev, item.dateStr);
+              openModalForEdit(item.ev, itemOccDate);
             });
             evDiv.addEventListener("dragstart", (e) => {
               window.currentDraggingEventId = item.ev.id;
-              window.currentDraggingEventDate = item.dateStr;
+              window.currentDraggingEventDate = itemOccDate;
               const rect = evDiv.getBoundingClientRect();
               window.currentDraggingOffsetY = e.clientY - rect.top;
 
               e.dataTransfer.setData("text/plain", item.ev.id);
-              e.dataTransfer.setData("sourceDate", item.dateStr);
+              e.dataTransfer.setData("sourceDate", itemOccDate);
               e.dataTransfer.setData("offsetY", window.currentDraggingOffsetY);
               
               let ghostEl = document.getElementById('drag-ghost-hider');
@@ -1444,6 +1558,7 @@
         checkboxes.forEach(cb => cb.checked = false);
 
         document.getElementById("btn-delete").style.display = "none";
+        document.getElementById("btn-duplicate").style.display = "none";
         document.getElementById("modal").style.display = "flex";
         setTimeout(() => document.getElementById("ev-title").focus(), 100);
       }
@@ -1471,6 +1586,7 @@
         });
 
         document.getElementById("btn-delete").style.display = "inline-block";
+        document.getElementById("btn-duplicate").style.display = "inline-block";
         document.getElementById("btn-delete").onclick = () => {
           if (ev.repeatDays && ev.repeatDays.length > 0) {
             closeModal();
@@ -1523,6 +1639,12 @@
           opt1Desc.innerText = "Chỉ đổi thời lượng cho tác vụ vào ngày này";
           opt2Desc.innerText = "Đổi thời lượng từ ngày này trở đi";
           opt3Desc.innerText = "Đổi thời lượng cho toàn bộ các lần lặp";
+        } else if (config.action === "duplicate") {
+          titleEl.innerText = "Nhân bản tác vụ lặp lại";
+          descEl.innerText = "Đây là tác vụ lặp lại. Bạn muốn nhân bản tác vụ nào?";
+          opt1Desc.innerText = "Chỉ nhân bản tác vụ vào ngày này (tác vụ đơn lẻ)";
+          opt2Desc.innerText = "Nhân bản tác vụ lặp lại từ ngày này trở đi";
+          opt3Desc.innerText = "Nhân bản toàn bộ chuỗi tác vụ lặp lại";
         } else {
           titleEl.innerText = "Chỉnh sửa tác vụ lặp lại";
           descEl.innerText = "Đây là tác vụ lặp lại. Bạn muốn áp dụng thay đổi cho những tác vụ nào?";
@@ -1586,7 +1708,7 @@
             events.push(singleEv);
           } else if (mode === 2) {
             const origAnchorDate = ev.start.substring(0, 10);
-            if (occDate <= origAnchorDate) {
+            if (occDate <= origAnchorDate && newValues.dateStr === origAnchorDate) {
               ev.title = newValues.title;
               ev.note = newValues.note;
               ev.color = newValues.color;
@@ -1679,9 +1801,10 @@
             const origAnchorDate = ev.start.substring(0, 10);
             let shiftedRepeatDays = [...ev.repeatDays];
             if (deltaDay !== 0) {
-              shiftedRepeatDays = ev.repeatDays.map(d => (d + deltaDay) % 7);
+              shiftedRepeatDays = ev.repeatDays.map(d => (d === sourceDay ? targetDay : d));
+              shiftedRepeatDays = Array.from(new Set(shiftedRepeatDays)).sort();
             }
-            if (occDate <= origAnchorDate) {
+            if (occDate <= origAnchorDate && targetDate === origAnchorDate) {
               ev.start = newStartStr;
               ev.end = newEndStr;
               ev.repeatDays = shiftedRepeatDays;
@@ -1706,7 +1829,8 @@
             }
           } else if (mode === 3) {
             if (deltaDay !== 0) {
-              ev.repeatDays = ev.repeatDays.map(d => (d + deltaDay) % 7);
+              ev.repeatDays = ev.repeatDays.map(d => (d === sourceDay ? targetDay : d));
+              ev.repeatDays = Array.from(new Set(ev.repeatDays)).sort();
             }
             const origAnchorDate = ev.start.substring(0, 10);
             const anchorStart = new Date(origAnchorDate + "T" + newStartTime + ":00");
@@ -1768,6 +1892,50 @@
             const anchorEnd = new Date(anchorStart.getTime() + newDurationMs);
             ev.end = formatDateYMD(anchorEnd) + "T" + String(anchorEnd.getHours()).padStart(2, '0') + ":" + String(anchorEnd.getMinutes()).padStart(2, '0') + ":00";
           }
+        } else if (action === "duplicate") {
+          const newValues = config.newValues;
+          if (mode === 1) {
+            const singleEv = {
+              id: Date.now().toString(),
+              title: newValues.title,
+              note: newValues.note,
+              color: newValues.color,
+              start: newValues.start,
+              end: newValues.end,
+              repeatDays: []
+            };
+            events.push(singleEv);
+          } else if (mode === 2) {
+            const newRecurringEv = {
+              id: Date.now().toString(),
+              title: newValues.title,
+              note: newValues.note,
+              color: newValues.color,
+              start: newValues.start,
+              end: newValues.end,
+              repeatDays: [...newValues.repeatDays],
+              untilDate: ev.untilDate
+            };
+            events.push(newRecurringEv);
+          } else if (mode === 3) {
+            const origAnchorDate = ev.start.substring(0, 10);
+            const anchorStart = new Date(origAnchorDate + "T" + newValues.startTime + ":00");
+            const anchorEnd = new Date(origAnchorDate + "T" + newValues.endTime + ":00");
+            if (anchorEnd <= anchorStart) {
+              anchorEnd.setDate(anchorEnd.getDate() + 1);
+            }
+            const newRecurringEv = {
+              id: Date.now().toString(),
+              title: newValues.title,
+              note: newValues.note,
+              color: newValues.color,
+              start: formatDateYMD(anchorStart) + "T" + String(anchorStart.getHours()).padStart(2, '0') + ":" + String(anchorStart.getMinutes()).padStart(2, '0') + ":00",
+              end: formatDateYMD(anchorEnd) + "T" + String(anchorEnd.getHours()).padStart(2, '0') + ":" + String(anchorEnd.getMinutes()).padStart(2, '0') + ":00",
+              repeatDays: [...newValues.repeatDays],
+              untilDate: ev.untilDate
+            };
+            events.push(newRecurringEv);
+          }
         }
 
         closeRecurringConfirm();
@@ -1776,6 +1944,124 @@
 
       function closeModal() {
         document.getElementById("modal").style.display = "none";
+      }
+
+      function duplicateEvent(ev, dateStr) {
+        if (!ev) return;
+        const occDate = dateStr || ev.start.substring(0, 10);
+        const startTime = ev.start.substring(11, 16);
+        const endTime = ev.end.substring(11, 16);
+        const occStartStr = occDate + "T" + startTime + ":00";
+        const occStart = new Date(occStartStr);
+        const origStart = new Date(ev.start);
+        const origEnd = new Date(ev.end);
+        const durationMs = origEnd.getTime() - origStart.getTime();
+        const occEnd = new Date(occStart.getTime() + durationMs);
+        const occEndStr = formatDateYMD(occEnd) + "T" + String(occEnd.getHours()).padStart(2, '0') + ":" + String(occEnd.getMinutes()).padStart(2, '0') + ":00";
+
+        if (ev.repeatDays && ev.repeatDays.length > 0) {
+          openRecurringConfirm({
+            action: "duplicate",
+            ev: ev,
+            occurrenceDate: occDate,
+            newValues: {
+              title: ev.title,
+              note: ev.note || "",
+              color: ev.color || "#0a84ff",
+              dateStr: occDate,
+              startTime: startTime,
+              endTime: endTime,
+              start: occStartStr,
+              end: occEndStr,
+              repeatDays: ev.repeatDays
+            }
+          });
+        } else {
+          const newEv = {
+            id: Date.now().toString(),
+            title: ev.title,
+            note: ev.note || "",
+            color: ev.color || "#0a84ff",
+            start: occStartStr,
+            end: occEndStr,
+            repeatDays: []
+          };
+          events.push(newEv);
+          saveEvents();
+        }
+      }
+
+      function duplicateModal() {
+        if (!currentEventId) return;
+
+        const title = document.getElementById("ev-title").value || "Untitled";
+        const note = document.getElementById("ev-note").value;
+        const color = document.getElementById("ev-color").value;
+
+        const dateStr = document.getElementById("ev-date").value || document.getElementById("ev-start").dataset.date || formatDateYMD(new Date());
+        const startTime = document.getElementById("ev-start").value || "00:00";
+        const endTime = document.getElementById("ev-end").value || "00:30";
+
+        const checkboxes = document.querySelectorAll('#ev-repeat input[type="checkbox"]:checked');
+        const repeatDays = Array.from(checkboxes).map(cb => parseInt(cb.value));
+
+        let startDate = new Date(dateStr + "T" + startTime + ":00");
+        let endDate = new Date(dateStr + "T" + endTime + ":00");
+
+        if (endDate <= startDate) {
+           if (startTime === endTime) {
+               endDate = new Date(startDate.getTime() + 30 * 60000);
+           } else {
+               endDate.setDate(endDate.getDate() + 1);
+           }
+        }
+
+        const newStartStr = formatDateYMD(startDate) + "T" + String(startDate.getHours()).padStart(2, '0') + ":" + String(startDate.getMinutes()).padStart(2, '0') + ":00";
+        const newEndStr = formatDateYMD(endDate) + "T" + String(endDate.getHours()).padStart(2, '0') + ":" + String(endDate.getMinutes()).padStart(2, '0') + ":00";
+
+        const ev = events.find((e) => e.id === currentEventId);
+        if (!ev) {
+          closeModal();
+          return;
+        }
+
+        const isRecurring = originalEditingEvent && originalEditingEvent.repeatDays && originalEditingEvent.repeatDays.length > 0;
+
+        if (isRecurring && repeatDays.length > 0) {
+          closeModal();
+          openRecurringConfirm({
+            action: "duplicate",
+            ev: ev,
+            originalEvent: originalEditingEvent,
+            occurrenceDate: originalEditingOccurrenceDate,
+            newValues: {
+              title: title,
+              note: note,
+              color: color,
+              dateStr: dateStr,
+              startTime: startTime,
+              endTime: endTime,
+              start: newStartStr,
+              end: newEndStr,
+              repeatDays: repeatDays
+            }
+          });
+          return;
+        }
+
+        const duplicateEv = {
+          id: Date.now().toString(),
+          title: title,
+          note: note,
+          color: color,
+          start: newStartStr,
+          end: newEndStr,
+          repeatDays: repeatDays
+        };
+
+        events.push(duplicateEv);
+        closeModal();
+        saveEvents();
       }
 
       function saveModal() {
