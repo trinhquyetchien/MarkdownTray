@@ -151,13 +151,13 @@ class DeleteMenuDialog(Gtk.Dialog):
 
 
 class EditPathsDialog(Gtk.Dialog):
-    def __init__(self, parent=None, daily_dir="", daily_alias="", deadline_file="", deadline_alias="", custom_menus=None, deadline_dir=""):
+    def __init__(self, parent=None, daily_dir="", daily_alias="", deadline_file="", deadline_alias="", custom_menus=None, deadline_dir="", calendar_file=""):
         super().__init__(title="Edit Paths", transient_for=parent, flags=0)
         self.add_buttons(
             Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
             Gtk.STOCK_SAVE, Gtk.ResponseType.OK
         )
-        self.set_default_size(520, 420)
+        self.set_default_size(540, 480)
         self.custom_menus = [dict(m) for m in (custom_menus or [])]
         deadline_target = deadline_file or deadline_dir
         
@@ -244,6 +244,36 @@ class EditPathsDialog(Gtk.Dialog):
         self.btn_deadline_folder = self.btn_deadline_file
         grid.attach(lbl_dl_path, 0, 6, 1, 1)
         grid.attach(self.btn_deadline_file, 1, 6, 2, 1)
+
+        # Separator Calendar
+        sep2 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        grid.attach(sep2, 0, 7, 3, 1)
+
+        # Section Calendar
+        lbl_cal_sec = Gtk.Label(xalign=0)
+        lbl_cal_sec.set_markup("<b>Calendar Data:</b>")
+        grid.attach(lbl_cal_sec, 0, 8, 3, 1)
+
+        lbl_cal_path = Gtk.Label(label="Path:", xalign=0)
+        lbl_cal_path.set_width_chars(8)
+        self.btn_calendar_file = Gtk.FileChooserButton(title="Select Calendar JSON File", action=Gtk.FileChooserAction.OPEN)
+        f_json = Gtk.FileFilter()
+        f_json.set_name("JSON files (*.json)")
+        f_json.add_pattern("*.json")
+        self.btn_calendar_file.add_filter(f_json)
+        self.btn_calendar_file.add_filter(f_all)
+        self.btn_calendar_file.set_filter(f_json)
+
+        if calendar_file:
+            if os.path.exists(calendar_file):
+                self.btn_calendar_file.set_filename(calendar_file)
+            else:
+                cdir = os.path.dirname(calendar_file)
+                if os.path.exists(cdir):
+                    self.btn_calendar_file.set_current_folder(cdir)
+        self.btn_calendar_file.set_hexpand(True)
+        grid.attach(lbl_cal_path, 0, 9, 1, 1)
+        grid.attach(self.btn_calendar_file, 1, 9, 2, 1)
         
         box.pack_start(grid, False, False, 0)
         
@@ -418,10 +448,13 @@ class MarkdownTrayApp:
     def load_config(self):
         default_daily = os.path.expanduser("~/Note/Daily")
         default_deadline = os.path.expanduser("~/Note/Deadline/Deadline.md")
+        default_calendar = os.path.expanduser("~/Note/calendar.json")
+        legacy_calendar = os.path.join(self.config_dir, "calendar.json")
         self.daily_dir = default_daily
         self.daily_alias = "Daily List"
         self.deadline_file = default_deadline
         self.deadline_alias = "Deadline"
+        self.calendar_file = default_calendar
         self.custom_menus = []
         
         if os.path.exists(self.config_file):
@@ -448,9 +481,19 @@ class MarkdownTrayApp:
                         self.deadline_file = default_deadline
                     
                     self.deadline_alias = config.get("deadline_alias", "Deadline")
+                    self.calendar_file = config.get("calendar_file", default_calendar)
                     self.custom_menus = config.get("custom_menus", [])
             except Exception as e:
                 print("Error loading config:", e)
+
+        # Migrate legacy calendar from ~/.config/md-tray-app/calendar.json to ~/Note/calendar.json
+        if not os.path.exists(self.calendar_file) and os.path.exists(legacy_calendar):
+            try:
+                import shutil
+                os.makedirs(os.path.dirname(self.calendar_file), exist_ok=True)
+                shutil.copy2(legacy_calendar, self.calendar_file)
+            except Exception as e:
+                print("Error migrating calendar file:", e)
 
     def save_config(self):
         if not os.path.exists(self.config_dir):
@@ -461,6 +504,7 @@ class MarkdownTrayApp:
                 "daily_alias": self.daily_alias,
                 "deadline_file": self.deadline_file,
                 "deadline_alias": self.deadline_alias,
+                "calendar_file": self.calendar_file,
                 "custom_menus": self.custom_menus
             }, f, indent=2)
 
@@ -476,21 +520,26 @@ class MarkdownTrayApp:
                         f.write("# Deadlines\n\n- [ ] Important deadline\n")
                 except Exception as e:
                     print("Error creating initial deadline note:", e)
+        if self.calendar_file:
+            cal_dir = os.path.dirname(self.calendar_file)
+            if cal_dir:
+                os.makedirs(cal_dir, exist_ok=True)
 
     def load_calendar(self):
         if os.path.exists(self.calendar_file):
             try:
-                with open(self.calendar_file, "r") as f:
+                with open(self.calendar_file, "r", encoding="utf-8") as f:
                     self.calendar_events = json.load(f)
             except Exception as e:
                 print("Error loading calendar:", e)
 
     def save_calendar(self):
-        if not os.path.exists(self.config_dir):
-            os.makedirs(self.config_dir, exist_ok=True)
+        cal_dir = os.path.dirname(self.calendar_file)
+        if cal_dir and not os.path.exists(cal_dir):
+            os.makedirs(cal_dir, exist_ok=True)
         try:
-            with open(self.calendar_file, "w") as f:
-                json.dump(self.calendar_events, f)
+            with open(self.calendar_file, "w", encoding="utf-8") as f:
+                json.dump(self.calendar_events, f, indent=2)
         except Exception as e:
             print("Error saving calendar:", e)
 
@@ -612,6 +661,7 @@ class MarkdownTrayApp:
             daily_alias=self.daily_alias,
             deadline_file=self.deadline_file,
             deadline_alias=self.deadline_alias,
+            calendar_file=self.calendar_file,
             custom_menus=self.custom_menus
         )
         dialog.set_keep_above(True)
@@ -621,14 +671,17 @@ class MarkdownTrayApp:
             new_daily_alias = dialog.entry_daily_alias.get_text().strip() or "Daily List"
             new_deadline = dialog.btn_deadline_file.get_filename() or self.deadline_file
             new_deadline_alias = dialog.entry_deadline_alias.get_text().strip() or "Deadline"
+            new_calendar = dialog.btn_calendar_file.get_filename() or self.calendar_file
             
             self.daily_dir = new_daily
             self.daily_alias = new_daily_alias
             self.deadline_file = new_deadline
             self.deadline_alias = new_deadline_alias
+            self.calendar_file = new_calendar
             self.custom_menus = dialog.get_updated_custom_menus()
             
             self.ensure_directories()
+            self.load_calendar()
             self.save_config()
             if not os.path.exists(self.current_filepath):
                 self.current_filepath = self.get_today_filepath()
